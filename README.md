@@ -1,10 +1,24 @@
-# FLARE 2025 QWen2.5-VL Baseline
+# FLARE 2025 2D MLLM QWen2.5-VL Baseline
 
-This repository provides a baseline implementation for fine-tuning QWen2.5-VL-7B on the FLARE 2025 2D multimodal medical image challenge datasets.
+This repository provides a baseline implementation for the FLARE 2025 2D multimodal medical image challenge using QWen2.5-VL-7B.
+
+## 🚀 Quick Start with Pre-trained Model
+
+**NEW**: A pre-trained baseline model is now available! Skip training and directly evaluate:
+
+🤗 **Model**: [leoyinn/qwen2.5vl-flare2025](https://huggingface.co/leoyinn/qwen2.5vl-flare2025)
+
+```bash
+# Quick evaluation with pre-trained model
+python evaluate_model.py \
+    --processed_data_dir processed_data_qwenvl \
+    --lora_weights leoyinn/qwen2.5vl-flare2025 \
+    --output_dir evaluation_results_baseline
+```
 
 ## Overview
 
-The pipeline supports all 19 datasets across 7 medical imaging modalities:
+The pipeline supports all 19 datasets across 8 medical imaging modalities:
 - **Retinography**: retino, fundus
 - **Ultrasound**: BUSI-det, BUS-UCLM-det, BUSI, BUS-UCLM, iugc
 - **X-ray**: boneresorption, dental, periapical, IU_XRay, chestdr
@@ -141,18 +155,35 @@ python finetune_qwenvl.py \
 ### 3. Evaluate Model
 
 ```bash
-# Evaluate and compare with base model
+# Option 1: Use pre-trained baseline model (RECOMMENDED)
+python evaluate_model.py \
+    --processed_data_dir processed_data_qwenvl \
+    --lora_weights leoyinn/qwen2.5vl-flare2025 \
+    --output_dir evaluation_results_baseline
+
+# Option 2: Evaluate your fine-tuned model
 python evaluate_model.py \
     --processed_data_dir processed_data_qwenvl \
     --lora_weights finetuned_qwenvl/final \
     --output_dir evaluation_results
 
-# Evaluate only fine-tuned model
+# Option 3: Compare with base model (no fine-tuning)
 python evaluate_model.py \
     --processed_data_dir processed_data_qwenvl \
     --lora_weights finetuned_qwenvl/final \
-    --skip_base_model
+    --evaluate_base_model \
+    --output_dir evaluation_results_comparison
 ```
+
+## Pre-trained Baseline Model
+
+### Model Details
+- **Base Model**: Qwen2.5-VL-7B-Instruct
+- **Fine-tuning**: QLoRA (4-bit quantization)
+- **Training Data**: All 19 FLARE 2025 datasets
+- **Parameters**: ~7B base + LoRA adapters
+- **Download**: [leoyinn/qwen2.5vl-flare2025](https://huggingface.co/leoyinn/qwen2.5vl-flare2025)
+
 
 ## Key Features
 
@@ -198,13 +229,44 @@ python evaluate_model.py \
 ### evaluate_model.py
 - `--max_eval_samples`: Limit evaluation samples per task
 - `--save_predictions`: Save individual predictions
+- `--lora_weights`: Path to LoRA weights (local path or HuggingFace model ID like leoyinn/qwen2.5vl-flare2025)
 - `--evaluate_base_model`: Compare with base model (default: True)
 
 ## Performance Notes
 
-- Training requires ~20GB GPU memory with default settings
-- Full dataset training takes ~24-48 hours on A100
-- Evaluation takes ~2-4 hours depending on dataset size
+### System Requirements
+- **Training**: ~20GB GPU memory with default settings
+- **Inference**: ~8GB GPU memory (with pre-trained model)
+- **Training Time**: 24-48 hours on A100 for full dataset
+- **Evaluation Time**: 2-4 hours depending on dataset size
+
+### Baseline Performance Results
+
+The pre-trained model shows significant improvements over the base QWen2.5-VL model across all FLARE 2025 tasks:
+
+![Model Performance Comparison](assets/model_performace_comparison.png)
+
+#### Primary Metrics Improvements (Base → Fine-tuned):
+
+| Task Type                      | Primary Metric      | Base Model | Fine-tuned | Improvement |
+| ------------------------------ | ------------------- | ---------- | ---------- | ----------- |
+| **Classification**             | Balanced Accuracy   | 0.0287     | 0.3330     | ↑ 1059.7%   |
+| **Detection**                  | F1 Score loU>0.5    | 0.0000     | 0.5399     | ↑ 53.99%    |
+| **Multi-label Classification** | F1 Score            | 0.0105     | 0.2862     | ↑ 2618.6%   |
+| **Report Generation**          | GREEN Score         | 0.5045     | 0.8238     | ↑ 63.3%     |
+| **Instance Detection**         | F1 Score loU>0.5    | 0.0000     | 0.0127     | ↑ 1.3%      |
+| **Regression**                 | Mean Absolute Error | ∞          | 17.0816    | ↑ inf       |
+| **Counting**                   | Mean Absolute Error | ∞          | 271.4700   | ↑ inf       |
+
+> **Note**: The base model showed infinite errors for regression and counting tasks (likely no valid predictions), while the fine-tuned model produces meaningful numerical outputs.
+
+
+### Benchmarking
+Use the pre-trained model as a baseline to:
+- Compare your fine-tuned models against
+- Quick start for FLARE 2025 submissions
+- Understand expected performance ranges
+- Validate your data preparation pipeline
 
 ## Troubleshooting
 
@@ -227,12 +289,20 @@ python evaluate_model.py \
 If you use this baseline in your research, please cite:
 
 ```bibtex
-@misc{flare2025_qwenvl_baseline,
-  title={QWen2.5-VL Baseline for FLARE 2025 2D Multimodal Medical Image Challenge},
-  author={Your Name},
+@misc{qwen25vl-flare2025,
+  title={QWen2.5VL Fine-tuned for FLARE 2025 Medical Image Analysis},
+  author={Shuolin Yin},
   year={2025},
-  publisher={GitHub},
-  howpublished={\url{https://github.com/your-repo}}
+  publisher={Hugging Face},
+  url={https://huggingface.co/leoyinn/qwen2.5vl-flare2025}
+}
+
+@misc{qwen25vl-base,
+  title={Qwen2.5-VL: Enhancing Vision-Language Model's Perception of the World at Any Resolution},
+  author={Qwen Team},
+  year={2024},
+  publisher={Hugging Face},
+  url={https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct}
 }
 ```
 
@@ -240,8 +310,16 @@ If you use this baseline in your research, please cite:
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
+## Dataset Access
+
+The FLARE 2025 datasets can be accessed at:
+- **Main Dataset**: [FLARE-MedFM/FLARE-Task5-MLLM-2D](https://huggingface.co/datasets/FLARE-MedFM/FLARE-Task5-MLLM-2D)
+- **Challenge Info**: [FLARE 2025 Official Website](https://www.flare.org/)
+
 ## Acknowledgments
 
 - QWen team for the base model
-- FLARE 2025 organizers for the dataset
-- HuggingFace for the transformers library 
+- FLARE 2025 organizers for the dataset and challenge
+- Shuolin Yin for providing the pre-trained baseline model
+- HuggingFace for the transformers library and model hosting
+- Medical imaging communities for the public datasets 
