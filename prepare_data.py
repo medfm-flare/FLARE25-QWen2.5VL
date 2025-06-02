@@ -45,7 +45,9 @@ def load_images_and_questions(base_dir, dataset_name, split, task_type, category
     """
     Load images and questions from a specific dataset and split
     """
-    logger.info(f"Loading {split} data for {category}/{dataset_name} dataset")
+    # Ensure base_dir is absolute path for consistency
+    base_dir = os.path.abspath(base_dir)
+    logger.info(f"Loading {split} data for {category}/{dataset_name} dataset from {base_dir}")
     
     try:
         if split == "train":
@@ -93,8 +95,7 @@ def load_images_and_questions(base_dir, dataset_name, split, task_type, category
 
         logger.info(f"Loaded {len(questions)} questions from {question_file}")
         
-        # REMOVED task type filtering - keep ALL task types as they appear in the data
-        # This ensures we preserve the full diversity of tasks in each dataset
+        
         unique_tasks = set(q['TaskType'] for q in questions)
         logger.info(f"Found task types: {sorted(unique_tasks)}")
         

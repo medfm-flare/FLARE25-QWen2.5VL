@@ -794,9 +794,9 @@ def main(args):
         
         # Define LoRA config for better convergence
         peft_config = LoraConfig(
-            r=16,
-            lora_alpha=32,
-            lora_dropout=0.1,
+            r=args.lora_rank,  # Use command-line argument
+            lora_alpha=args.lora_alpha,  # Use command-line argument
+            lora_dropout=args.lora_dropout,  # Use command-line argument
             bias="none",
             task_type="CAUSAL_LM",
             target_modules=["q_proj", "k_proj", "v_proj", "o_proj", 
@@ -865,12 +865,12 @@ def main(args):
             
             # Training arguments
             output_dir=args.output_dir,
-            learning_rate=1e-4,
+            learning_rate=args.learning_rate,  # Use command-line argument
             per_device_train_batch_size=args.batch_size,
             per_device_eval_batch_size=2,
             gradient_accumulation_steps=args.gradient_accumulation_steps,
             num_train_epochs=args.num_epochs,
-            weight_decay=0.01,
+            weight_decay=args.weight_decay,  # Use command-line argument
             save_strategy="steps",
             save_steps=args.save_steps,
             eval_strategy="steps",
@@ -999,12 +999,12 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="finetuned_qwenvl")
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=8)
-    parser.add_argument("--learning_rate", type=float, default=3e-4)
+    parser.add_argument("--learning_rate", type=float, default=1e-4)  # Match config.yaml
     parser.add_argument("--weight_decay", type=float, default=0.01)
     parser.add_argument("--num_epochs", type=int, default=3)
-    parser.add_argument("--lora_rank", type=int, default=32)
-    parser.add_argument("--lora_alpha", type=int, default=64)
-    parser.add_argument("--lora_dropout", type=float, default=0.05)
+    parser.add_argument("--lora_rank", type=int, default=16)  # Match config.yaml
+    parser.add_argument("--lora_alpha", type=int, default=32)  # Match config.yaml
+    parser.add_argument("--lora_dropout", type=float, default=0.1)  # Match config.yaml
     parser.add_argument("--max_seq_length", type=int, default=4096)
     parser.add_argument("--use_wandb", action="store_true")
     parser.add_argument("--run_name", type=str, default="qwenvl-medical")

@@ -21,7 +21,7 @@ The pipeline supports all 19 datasets across 7 medical imaging modalities:
 - Instance Detection (F1 Score @ IoU 0.3/0.5)
 - Cell Counting (Mean Absolute Error)
 - Regression (Mean Absolute Error)
-- Report Generation (GREEN Score)
+- Report Generation (Comprehensive GREEN Score)
 
 ## Requirements
 
@@ -44,6 +44,33 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+## Quick Start
+
+The easiest way to run the complete pipeline is using the provided script:
+
+```bash
+# Make the script executable
+chmod +x run_pipeline.sh
+
+# Run the complete pipeline (prepare data, train, and evaluate)
+./run_pipeline.sh
+
+# Run with custom configuration
+./run_pipeline.sh --config config_custom.yaml
+
+# Run specific steps only
+./run_pipeline.sh --prepare-only    # Only prepare data
+./run_pipeline.sh --train-only      # Only train (requires prepared data)
+./run_pipeline.sh --evaluate-only   # Only evaluate (requires trained model)
+```
+
+The `run_pipeline.sh` script will:
+1. Validate the dataset structure
+2. Prepare the data for training
+3. Fine-tune the QWen2.5-VL model
+4. Evaluate the model performance
+5. Generate comprehensive reports
+
 ## Dataset Preparation
 
 The pipeline expects the FLARE 2025 dataset to be organized in the following structure:
@@ -65,6 +92,20 @@ organized_dataset/
 ```
 
 ## Usage
+
+## Usage (Detailed Control)
+
+For users who want more control over individual steps, you can run each component separately:
+
+### 0. Validate Dataset (Optional but Recommended)
+
+```bash
+# Validate dataset structure
+python validate_dataset.py --base_dir organized_dataset
+
+# Also check image integrity (slower)
+python validate_dataset.py --base_dir organized_dataset --check_images
+```
 
 ### 1. Prepare Data
 
@@ -132,7 +173,7 @@ python evaluate_model.py \
 - Multiple IoU thresholds for detection tasks (0.3-0.7)
 - Per-chromosome breakdown for instance detection
 - Detailed comparison reports
-- Comprehensive GREEN Score for report generation with:
+- GREEN Score for report generation with:
   - Clinical entity matching with severity assessment
   - Anatomical location grounding with laterality
   - Temporal information consistency

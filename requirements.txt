@@ -24,6 +24,7 @@ psutil>=5.9.0
 
 # Optional but recommended
 wandb>=0.15.0  # For experiment tracking
+huggingface-hub>=0.17.0  # For model downloads
 
 # Development tools (optional)
 pytest>=7.4.0
