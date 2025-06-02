@@ -1,0 +1,181 @@
+# FLARE 2025 QWen2.5-VL Baseline Configuration
+
+# Model settings
+model:
+  name_or_path: "Qwen/Qwen2.5-VL-7B-Instruct"
+  quantization:
+    load_in_4bit: true
+    bnb_4bit_use_double_quant: true
+    bnb_4bit_quant_type: "nf4"
+  
+# LoRA settings
+lora:
+  rank: 16
+  alpha: 32
+  dropout: 0.1
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+# Training settings
+training:
+  num_epochs: 3
+  learning_rate: 1e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler_type: "cosine"
+  max_grad_norm: 0.5
+  
+  # Batch settings (auto-determined if not specified)
+  # batch_size: 4
+  # gradient_accumulation_steps: 8
+  
+  # Sequence length
+  max_seq_length: 4096
+  
+  # Checkpointing
+  save_steps: 500
+  eval_steps: 500
+  save_total_limit: 3
+  
+  # Early stopping
+  early_stopping_patience: 5
+  early_stopping_threshold: 0.001
+  
+  # Optimization
+  optimizer: "adamw_8bit"
+  gradient_checkpointing: true
+  fp16: false
+  bf16: true  # Requires GPU with compute capability >= 8.0
+
+# Data settings
+data:
+  base_dir: "organized_dataset"
+  processed_dir: "processed_data_qwenvl"
+  
+  # Image processing
+  image_size: 448
+  image_cache_size_mb: 8192  # Adjust based on available RAM
+  
+  # Dataloader settings
+  num_workers: 0  # Set to 0 for stability with multimodal data
+  pin_memory: false
+  prefetch_factor: null
+
+# Evaluation settings
+evaluation:
+  batch_size: 1  # Conservative for memory safety
+  max_eval_samples: 0  # 0 = evaluate all
+  save_predictions: false
+  evaluate_base_model: true
+  
+  # Task-specific IoU thresholds
+  detection_iou_thresholds: [0.3, 0.4, 0.5, 0.6, 0.7]
+  primary_detection_threshold: 0.3  # Medical imaging standard
+
+# Hardware settings
+hardware:
+  cuda_device: "0"  # Which GPU to use
+  mixed_precision: true
+  torch_compile: false  # Experimental, may cause issues
+  
+# Logging settings
+logging:
+  level: "INFO"
+  wandb:
+    enabled: false
+    project: "flare2025-qwenvl"
+    run_name: "baseline"
+  
+# Paths
+paths:
+  output_dir: "finetuned_qwenvl"
+  eval_output_dir: "evaluation_results"
+  log_dir: "logs"
+
+# Dataset configurations
+datasets:
+  # Full list of 19 datasets
+  all:
+    - name: "retino"
+      category: "Retinography"
+    - name: "fundus"
+      category: "Retinography"
+    - name: "BUSI-det"
+      category: "Ultrasound"
+    - name: "BUS-UCLM-det"
+      category: "Ultrasound"
+    - name: "BUSI"
+      category: "Ultrasound"
+    - name: "BUS-UCLM"
+      category: "Ultrasound"
+    - name: "iugc"
+      category: "Ultrasound"
+    - name: "boneresorption"
+      category: "Xray"
+    - name: "dental"
+      category: "Xray"
+    - name: "periapical"
+      category: "Xray"
+    - name: "IU_XRay"
+      category: "Xray"
+    - name: "chestdr"
+      category: "Xray"
+    - name: "neojaundice"
+      category: "Clinical"
+    - name: "chromosome"
+      category: "Microscopy"
+    - name: "neurips22cell"
+      category: "Microscopy"
+    - name: "bone_marrow"
+      category: "Microscopy"
+    - name: "endo"
+      category: "Endoscopy"
+    - name: "bcn20000"
+      category: "Dermatology"
+    - name: "CMMD"
+      category: "Mammography"
+  
+  # Subset for testing
+  test_subset:
+    - name: "retino"
+      category: "Retinography"
+    - name: "BUSI-det"
+      category: "Ultrasound"
+    - name: "boneresorption"
+      category: "Xray"
+
+# Task type configurations
+task_types:
+  classification:
+    primary_metric: "balanced_accuracy"
+    instruction: "Look at the image carefully and classify what you see. Provide a clear, specific answer."
+  
+  multi_label_classification:
+    primary_metric: "f1_score"
+    instruction: "Examine the image and identify all relevant labels or categories that apply. List them clearly."
+  
+  detection:
+    primary_metric: "f1_score"
+    instruction: "Examine the image and detect the specified objects or features. Be precise in your response."
+  
+  instance_detection:
+    primary_metric: "f1_score_at_05"
+    instruction: "Look at the image and identify specific instances of the target objects. Provide precise detection results."
+  
+  counting:
+    primary_metric: "mean_absolute_error"
+    instruction: "Count the specified objects or features in the image. Provide an accurate numerical answer."
+  
+  regression:
+    primary_metric: "mean_absolute_error"
+    instruction: "Analyze the image and provide a quantitative assessment. Give your answer with appropriate precision."
+  
+  report_generation:
+    primary_metric: "green_score"
+    instruction: "Examine the medical image thoroughly and generate a comprehensive report describing your findings." 
