@@ -303,6 +303,9 @@ def prepare_dataset(base_dir, dataset_configs, output_dir, max_samples=None):
     """
     Prepare datasets for fine-tuning
     """
+    # Set random seed for reproducibility
+    random.seed(42)
+    
     all_train_data = []
     all_val_data = []
     all_test_data = []
