@@ -40,7 +40,6 @@ The pipeline supports all 19 datasets across 8 medical imaging modalities:
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd finetune_qwenvl_script
 
 # Create virtual environment
 python -m venv venv
@@ -79,7 +78,7 @@ The `run_pipeline.sh` script will:
 
 ## Dataset Preparation
 
-The pipeline expects the FLARE 2025 dataset to be organized in the following structure:
+The pipeline expects the [FLARE 2025 2D MLLM](https://huggingface.co/datasets/FLARE-MedFM/FLARE-Task5-MLLM-2D) dataset to be organized in the following structure:
 
 ```
 organized_dataset/
@@ -382,12 +381,11 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 The FLARE 2025 datasets can be accessed at:
 - **Main Dataset**: [FLARE-MedFM/FLARE-Task5-MLLM-2D](https://huggingface.co/datasets/FLARE-MedFM/FLARE-Task5-MLLM-2D)
-- **Challenge Info**: [FLARE 2025 Official Website](https://www.flare.org/)
+- **Challenge Info**: [FLARE 2025 Official Website](https://flare-medfm.github.io/)
 
 ## Acknowledgments
 
 - QWen team for the base model
 - FLARE 2025 organizers for the dataset and challenge
-- Shuolin Yin for providing the pre-trained baseline model
 - HuggingFace for the transformers library and model hosting
 - Medical imaging communities for the public datasets 
