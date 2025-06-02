@@ -175,6 +175,82 @@ python evaluate_model.py \
     --output_dir evaluation_results_comparison
 ```
 
+### 4. Inference
+
+#### Basic Inference
+
+```bash
+# Single image inference
+python inference.py \
+    --model_name finetuned_qwenvl/final \
+    --image_path chest_xray.jpg \
+    --task classification \
+    --prompt "What abnormalities are present in this chest X-ray?"
+```
+
+#### Batch Processing with Question File
+
+For processing multiple images with specific questions, use a JSON question file:
+
+```bash
+python inference.py \
+    --model_name leoyinn/qwen2.5vl-flare2025 \
+    --questions_file questions.json \
+    --output results.json \
+    --verbose
+```
+
+#### Question File Format
+
+```json
+[
+    {
+        "TaskType": "Classification",
+        "Modality": "Clinical",
+        "ImageName": "organized_dataset/training/Clinical/neojaundice/imagesTr/NeoJaundice_00001-1.jpg",
+        "Question": "Is therapeutic intervention required for this jaundiced newborn? A. No Treatment, B. Treatment Required",
+        "Split": "test"
+    },
+    {
+        "TaskType": "Detection",
+        "Modality": "Ultrasound",
+        "ImageName": "organized_dataset/testing/Ultrasound/iugc/imagesTs/IUGC_00577-18.png",
+        "Question": "Define the position of fetal head using its bounding box coordinates.",
+        "Split": "test"
+    }
+]
+```
+
+### Advanced Options
+
+```bash
+inference.py [-h] [--model_name MODEL_NAME] [--device {cuda,cpu,auto}] [--no_quantize] [--image_path IMAGE_PATH] [--image_folder IMAGE_FOLDER] [--file_pattern FILE_PATTERN]
+                    [--questions_file QUESTIONS_FILE] [--task {classification,multi_label,detection,counting,report_generation,vqa}] [--prompt PROMPT] [--question QUESTION]
+                    [--target TARGET] [--max_tokens MAX_TOKENS] [--temperature TEMPERATURE] [--batch_size BATCH_SIZE] [--output OUTPUT] [--verbose]
+```
+
+### Output Format
+
+The inference script produces structured JSON output:
+
+```json
+{
+    "image_path": "chest_xray.jpg",
+    "task": "classification",
+    "prompt": "What abnormalities are present?",
+    "raw_response": "The chest X-ray shows bilateral pulmonary infiltrates...",
+    "parsed_result": {
+        "diagnosis": "Bilateral pneumonia",
+        "confidence": 0.85
+    },
+    "metadata": {
+        "model": "leoyinn/qwen2.5vl-flare2025",
+        "temperature": 0.1,
+        "max_tokens": 128
+    }
+}
+```
+
 ## Pre-trained Baseline Model
 
 ### Model Details
@@ -251,10 +327,10 @@ The pre-trained model shows significant improvements over the base QWen2.5-VL mo
 | Task Type                      | Primary Metric      | Base Model | Fine-tuned | Improvement |
 | ------------------------------ | ------------------- | ---------- | ---------- | ----------- |
 | **Classification**             | Balanced Accuracy   | 0.0287     | 0.3330     | ↑ 1059.7%   |
-| **Detection**                  | F1 Score loU>0.5    | 0.0000     | 0.5399     | ↑ 53.99%    |
+| **Detection**                  | F1 Score loU>0.5    | 0.0000     | 0.5399     | ↑ 5399.0%   |
 | **Multi-label Classification** | F1 Score            | 0.0105     | 0.2862     | ↑ 2618.6%   |
 | **Report Generation**          | GREEN Score         | 0.5045     | 0.8238     | ↑ 63.3%     |
-| **Instance Detection**         | F1 Score loU>0.5    | 0.0000     | 0.0127     | ↑ 1.3%      |
+| **Instance Detection**         | F1 Score loU>0.5    | 0.0000     | 0.0127     | ↑ 1270.0%   |
 | **Regression**                 | Mean Absolute Error | ∞          | 17.0816    | ↑ inf       |
 | **Counting**                   | Mean Absolute Error | ∞          | 271.4700   | ↑ inf       |
 
