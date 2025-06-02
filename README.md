@@ -318,14 +318,14 @@ The pre-trained model shows significant improvements over the base QWen2.5-VL mo
 | Task Type                      | Primary Metric      | Base Model | Fine-tuned | Improvement |
 | ------------------------------ | ------------------- | ---------- | ---------- | ----------- |
 | **Classification**             | Balanced Accuracy   | 0.0287     | 0.3330     | ↑ 1059.7%   |
-| **Detection**                  | F1 Score loU>0.5    | 0.0000     | 0.5399     | ↑ 5399.0%   |
+| **Detection**                  | F1 Score loU>0.5    | 0.0000     | 0.5399     | ↑ 54.0%     |
 | **Multi-label Classification** | F1 Score            | 0.0105     | 0.2862     | ↑ 2618.6%   |
 | **Report Generation**          | GREEN Score         | 0.5045     | 0.8238     | ↑ 63.3%     |
-| **Instance Detection**         | F1 Score loU>0.5    | 0.0000     | 0.0127     | ↑ 1270.0%   |
+| **Instance Detection**         | F1 Score loU>0.5    | 0.0000     | 0.0127     | ↑ 1.3%      |
 | **Regression**                 | Mean Absolute Error | ∞          | 17.0816    | ↑ inf       |
 | **Counting**                   | Mean Absolute Error | ∞          | 271.4700   | ↑ inf       |
 
-> **Note**: The base model showed infinite errors for regression and counting tasks (likely no valid predictions), while the fine-tuned model produces meaningful numerical outputs.
+> **Note**: The base model showed infinite errors for regression and counting tasks (no valid predictions), while the fine-tuned model produces meaningful numerical outputs.
 
 
 ### Benchmarking
