@@ -4,17 +4,9 @@ This repository provides a baseline implementation for the FLARE 2025 2D multimo
 
 ## 🚀 Quick Start with Pre-trained Model
 
-**NEW**: A pre-trained baseline model is now available! Skip training and directly evaluate:
+The pre-trained baseline model is available at:
 
 🤗 **Model**: [leoyinn/qwen2.5vl-flare2025](https://huggingface.co/leoyinn/qwen2.5vl-flare2025)
-
-```bash
-# Quick evaluation with pre-trained model
-python evaluate_model.py \
-    --processed_data_dir processed_data_qwenvl \
-    --lora_weights leoyinn/qwen2.5vl-flare2025 \
-    --output_dir evaluation_results_baseline
-```
 
 ## Overview
 
