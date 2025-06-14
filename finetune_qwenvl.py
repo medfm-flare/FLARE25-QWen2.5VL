@@ -273,65 +273,90 @@ class OptimizedMultimodalDataCollator:
         img_start = time.time()
         for idx, example in enumerate(examples):
             try:
-                # Get image path - handle both old and new formats
+                # Get image paths - handle both old and new formats
+                image_paths = []
                 if "images" in example:
-                    image_path = example["images"]
+                    # Handle list of image paths (multi-image support)
+                    images_field = example["images"]
+                    if isinstance(images_field, list):
+                        image_paths = images_field
+                    else:
+                        image_paths = [images_field]  # Single image as string
                 elif "image" in example:
-                    image_path = example["image"]
+                    # Legacy single image format
+                    image_paths = [example["image"]]
                 else:
                     logger.error(f"No image field found in example {idx}")
                     continue
                 
-                # Load and validate image
-                image = self.image_loader.load_image(image_path)
-                
-                # Ensure consistent image size before processing
-                target_size = (448, 448)
-                
-                # Safely get image size
-                if isinstance(image, np.ndarray):
-                    if image.ndim >= 2:
-                        current_size = (image.shape[1], image.shape[0])  # (width, height)
-                    else:
-                        logger.error(f"Invalid numpy image shape: {image.shape}")
-                        raise ValueError(f"Invalid numpy image shape: {image.shape}")
-                elif isinstance(image, Image.Image):
-                    current_size = image.size
-                else:
-                    logger.error(f"Unsupported image object type: {type(image)}")
-                    raise ValueError(f"Unsupported image object type: {type(image)}")
-                
-                # Resize if needed
-                if current_size != target_size:
-                    logger.debug(f"Resizing image from {current_size} to {target_size}")
-                    if isinstance(image, Image.Image):
-                        try:
-                            from PIL import Image as PILImage
-                            resample_const = getattr(PILImage, "Resampling", PILImage).LANCZOS if hasattr(PILImage, "Resampling") else PILImage.LANCZOS
-                            image = image.resize(target_size, resample_const)
-                        except Exception as resize_err:
-                            logger.warning(f"PIL resize failed ({resize_err}); retrying with default resample")
-                            image = image.resize(target_size)
-                    else:
-                        # Convert numpy array to PIL Image and resize
-                        from PIL import Image as PILImage
-                        if image.ndim == 2:
-                            image = PILImage.fromarray(image, mode='L').convert('RGB')
+                # Load all images for this example
+                example_images = []
+                for img_path in image_paths:
+                    try:
+                        # Load and validate image
+                        image = self.image_loader.load_image(img_path)
+                        
+                        # Ensure consistent image size before processing
+                        target_size = (448, 448)
+                        
+                        # Safely get image size
+                        if isinstance(image, np.ndarray):
+                            if image.ndim >= 2:
+                                current_size = (image.shape[1], image.shape[0])  # (width, height)
+                            else:
+                                logger.error(f"Invalid numpy image shape: {image.shape}")
+                                raise ValueError(f"Invalid numpy image shape: {image.shape}")
+                        elif isinstance(image, Image.Image):
+                            current_size = image.size
                         else:
-                            image = PILImage.fromarray(image)
-                        try:
-                            resample_const = getattr(PILImage, "Resampling", PILImage).LANCZOS if hasattr(PILImage, "Resampling") else PILImage.LANCZOS
-                            image = image.resize(target_size, resample_const)
-                        except Exception as resize_err:
-                            logger.warning(f"PIL resize (numpy convert) failed ({resize_err}); resizing with default")
-                            image = image.resize(target_size)
+                            logger.error(f"Unsupported image object type: {type(image)}")
+                            raise ValueError(f"Unsupported image object type: {type(image)}")
+                        
+                        # Resize if needed
+                        if current_size != target_size:
+                            logger.debug(f"Resizing image from {current_size} to {target_size}")
+                            if isinstance(image, Image.Image):
+                                try:
+                                    from PIL import Image as PILImage
+                                    resample_const = getattr(PILImage, "Resampling", PILImage).LANCZOS if hasattr(PILImage, "Resampling") else PILImage.LANCZOS
+                                    image = image.resize(target_size, resample_const)
+                                except Exception as resize_err:
+                                    logger.warning(f"PIL resize failed ({resize_err}); retrying with default resample")
+                                    image = image.resize(target_size)
+                            else:
+                                # Convert numpy array to PIL Image and resize
+                                from PIL import Image as PILImage
+                                if image.ndim == 2:
+                                    image = PILImage.fromarray(image, mode='L').convert('RGB')
+                                else:
+                                    image = PILImage.fromarray(image)
+                                try:
+                                    resample_const = getattr(PILImage, "Resampling", PILImage).LANCZOS if hasattr(PILImage, "Resampling") else PILImage.LANCZOS
+                                    image = image.resize(target_size, resample_const)
+                                except Exception as resize_err:
+                                    logger.warning(f"PIL resize (numpy convert) failed ({resize_err}); resizing with default")
+                                    image = image.resize(target_size)
+                        
+                        # Final validation
+                        if not isinstance(image, Image.Image):
+                            logger.error(f"Processed image is not a PIL Image (type={type(image)}) -> skipping image")
+                            continue
+                        
+                        example_images.append(image)
+                    except Exception as img_error:
+                        logger.warning(f"Failed to load image {img_path}: {img_error}")
+                        continue
                 
-                # Final validation
-                if not isinstance(image, Image.Image):
-                    logger.error(f"Processed image is not a PIL Image (type={type(image)}) -> skipping example {idx}")
-                    raise ValueError("Invalid image after preprocessing")
+                # Skip example if no valid images
+                if not example_images:
+                    logger.warning(f"No valid images found for example {idx}, skipping")
+                    continue
                 
-                batch_images.append(image)
+                # For now, use only the first image (QWen2.5-VL single image mode)
+                # TODO: Implement multi-image support when needed
+                batch_images.append(example_images[0])
+                if len(example_images) > 1:
+                    logger.debug(f"Example {idx} has {len(example_images)} images, using first image only")
                 
                 # Get messages - handle both old and new formats
                 if "messages" in example:

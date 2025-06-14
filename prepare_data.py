@@ -114,33 +114,63 @@ def load_images_and_questions(base_dir, dataset_name, split, task_type, category
             # Handle ImageName being either a string or a list
             image_names = question["ImageName"]
             if isinstance(image_names, list):
-                # For multi-image questions, use the first image as primary
-                # This is a practical solution - future enhancement could handle all images
-                image_name = image_names[0]
-                logger.debug(f"Using first image from list of {len(image_names)} images")
+                # Process all images in multi-image questions
+                logger.debug(f"Processing multi-image question with {len(image_names)} images")
+                
+                # Collect all valid image paths
+                valid_image_paths = []
+                for image_name in image_names:
+                    image_path = os.path.join(image_dir, os.path.basename(image_name))
+                    
+                    # Check if image exists and is valid
+                    if not os.path.exists(image_path):
+                        logger.warning(f"Image not found - {image_path}")
+                        skipped_images += 1
+                        continue
+                        
+                    if not validate_image(image_path):
+                        skipped_images += 1
+                        continue
+                    
+                    valid_image_paths.append(image_path)
+                
+                # Only create sample if we have at least one valid image
+                if valid_image_paths:
+                    sample = {
+                        "images": valid_image_paths,  # Store all valid images
+                        "question": question["Question"],
+                        "answer": str(question["Answer"]),
+                        "task_type": question["TaskType"],  # Preserve original case and task type
+                        "modality": question["Modality"],
+                        "num_images": len(valid_image_paths)
+                    }
+                    formatted_data.append(sample)
+                else:
+                    logger.warning(f"No valid images found for multi-image question, skipping")
             else:
+                # Single image case
                 image_name = image_names
-            
-            image_path = os.path.join(image_dir, os.path.basename(image_name))
-            
-            # Check if image exists and is valid
-            if not os.path.exists(image_path):
-                logger.warning(f"Image not found - {image_path}")
-                skipped_images += 1
-                continue
+                image_path = os.path.join(image_dir, os.path.basename(image_name))
                 
-            if not validate_image(image_path):
-                skipped_images += 1
-                continue
-                
-            sample = {
-                "image": image_path,
-                "question": question["Question"],
-                "answer": str(question["Answer"]),
-                "task_type": question["TaskType"],  # Preserve original case and task type
-                "modality": question["Modality"]
-            }
-            formatted_data.append(sample)
+                # Check if image exists and is valid
+                if not os.path.exists(image_path):
+                    logger.warning(f"Image not found - {image_path}")
+                    skipped_images += 1
+                    continue
+                    
+                if not validate_image(image_path):
+                    skipped_images += 1
+                    continue
+                    
+                sample = {
+                    "images": [image_path],  # Store as list for consistency
+                    "question": question["Question"],
+                    "answer": str(question["Answer"]),
+                    "task_type": question["TaskType"],  # Preserve original case and task type
+                    "modality": question["Modality"],
+                    "num_images": 1
+                }
+                formatted_data.append(sample)
         
         if skipped_images > 0:
             logger.warning(f"Skipped {skipped_images} invalid/missing images for {dataset_name} {split}")
@@ -154,10 +184,33 @@ def load_images_and_questions(base_dir, dataset_name, split, task_type, category
 
 def create_formatted_prompt(sample, task_type):
     """
-    Create formatted prompt based on task type
+    Create formatted messages in Qwen2.5-VL format, supporting multiple images
     """
-    base_prompt = f"<image>\n{sample['question']}"
-    return base_prompt
+    # Create content array with images and text
+    content = []
+    
+    # Add all images to content
+    images = sample.get('images', [])
+    for image_path in images:
+        content.append({"type": "image", "image": image_path})
+    
+    # Add the text question
+    content.append({"type": "text", "text": sample['question']})
+    
+    # Create the messages format as expected by Qwen2.5-VL
+    messages = [
+        {
+            "role": "user",
+            "content": content
+        },
+        {
+            "role": "assistant", 
+            "content": sample['answer']
+        }
+    ]
+    
+    
+    return messages
 
 def get_all_dataset_configs():
     """Get configuration for all 19 datasets in FLARE25"""
@@ -280,13 +333,28 @@ def validate_processed_data(output_dir):
         # Check a few samples
         for i in range(min(3, len(train_dataset))):
             sample = train_dataset[i]
-            logger.info(f"Sample {i}: image={os.path.basename(sample['image'])}, "
+            # Handle both old and new formats
+            if 'images' in sample:
+                image_info = f"images={[os.path.basename(img) for img in sample['images'][:2]]}" + \
+                           (f" (+{len(sample['images'])-2} more)" if len(sample['images']) > 2 else "")
+                num_images = sample.get('num_images', len(sample['images']))
+            else:  # Legacy format
+                image_info = f"image={os.path.basename(sample['image'])}"
+                num_images = 1
+            
+            logger.info(f"Sample {i}: {image_info}, "
+                       f"num_images={num_images}, "
                        f"question_len={len(sample['question'])}, "
                        f"task_type={sample['task_type']}")
             
-            # Verify image exists
-            if not os.path.exists(sample['image']):
-                logger.error(f"Image not found: {sample['image']}")
+            # Verify images exist
+            if 'images' in sample:
+                for img_path in sample['images']:
+                    if not os.path.exists(img_path):
+                        logger.error(f"Image not found: {img_path}")
+            elif 'image' in sample:
+                if not os.path.exists(sample['image']):
+                    logger.error(f"Image not found: {sample['image']}")
     
     # Check validation dataset
     val_path = os.path.join(output_dir, "validation")

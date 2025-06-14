@@ -1152,14 +1152,22 @@ def create_evaluation_prompt(row):
     # Create exact same format as training but stop at user message
     full_question = f"{instruction}\n\n{question}"
     
+    # Create content array with all images following Qwen2.5-VL format
+    content = []
+    
+    # Add all images to content
+    images = row.get('images', [])
+    for image_path in images:
+        content.append({"type": "image", "image": image_path})
+    
+    # Add text question
+    content.append({"type": "text", "text": full_question})
+    
     return {
         "messages": [
             {
                 "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text", "text": full_question}
-                ]
+                "content": content
             }
         ]
     }
@@ -1184,6 +1192,10 @@ def evaluate_model(args):
         logger.info("="*60)
         logger.info(f"Log file: {log_filename}")
         logger.info(f"Arguments: {vars(args)}")
+        if args.task_type:
+            logger.info(f"🎯 Evaluating only task type: {args.task_type}")
+        else:
+            logger.info("📋 Evaluating all task types")
         
         # Validate critical arguments early
         if not os.path.exists(args.processed_data_dir):
@@ -1364,6 +1376,17 @@ def evaluate_model(args):
             
             logger.info(f"Found task types: {list(task_groups.keys())} with counts: {[(k, len(v)) for k, v in task_groups.items()]}")
             
+            # Filter task groups if specific task is requested
+            if args.task_type:
+                if args.task_type in task_groups:
+                    filtered_task_groups = {args.task_type: task_groups[args.task_type]}
+                    logger.info(f"Filtering to evaluate only task type: {args.task_type} with {len(task_groups[args.task_type])} examples")
+                    task_groups = filtered_task_groups
+                else:
+                    logger.error(f"Requested task type '{args.task_type}' not found in dataset")
+                    logger.error(f"Available task types: {list(task_groups.keys())}")
+                    raise ValueError(f"Task type '{args.task_type}' not found in dataset")
+            
             # Evaluate by task type
             all_results = {}
             
@@ -1396,43 +1419,59 @@ def evaluate_model(args):
                     batch_prompts = []
                     batch_images_pil = []
                     
+                                        # Process examples using official Qwen2.5-VL format
+                    batch_messages = []
+                    
                     for example in batch_examples:
                         try:
-                            # Load image
-                            image = Image.open(example["image"]).convert("RGB")
-                            # Resize to same size as training 
-                            image = image.resize((448, 448), Image.LANCZOS)
-                            batch_images_pil.append(image)
-                            
-                            # Use same prompt format as training
+                            # Create evaluation prompt in Qwen2.5-VL message format
                             prompt_data = create_evaluation_prompt(example)
+                            batch_messages.append(prompt_data["messages"])
                             
-                            # Apply same chat template as training
+                            # Apply chat template
                             prompt_text = tokenizer.apply_chat_template(
                                 prompt_data["messages"],
                                 tokenize=False,
-                                add_generation_prompt=True  # Add generation prompt for inference
+                                add_generation_prompt=True
                             )
-                            
                             batch_prompts.append(prompt_text)
                             
                         except Exception as e_img:
-                            logger.error(f"Error loading image {example.get('image', 'unknown')}: {e_img}")
+                            image_info = example.get('images', [example.get('image', 'unknown')])
+                            logger.error(f"Error loading images {image_info}: {e_img}")
                             task_skipped_count += 1
                             continue
                     
-                    if not batch_images_pil: # All images in batch failed to load
+                    if not batch_messages: # All examples in batch failed to process
                         continue
 
                     try:
-                        data_inputs = processor(
-                            images=batch_images_pil,
-                            text=batch_prompts,
-                            return_tensors="pt",
-                            padding=True, # Important for batching
-                            truncation=True # Important for batching
-                        )
+                        # Use standard processor approach - manually extract images from messages
+                        all_images = []
+                        for messages in batch_messages:
+                            for message in messages:
+                                if message["role"] == "user":
+                                    for content in message["content"]:
+                                        if content["type"] == "image":
+                                            image_path = content["image"]
+                                            try:
+                                                image = Image.open(image_path).convert("RGB")
+                                                # Ensure consistent size for QWen2.5-VL
+                                                image = image.resize((448, 448), Image.LANCZOS)
+                                                all_images.append(image)
+                                            except Exception as img_err:
+                                                logger.error(f"Error loading image {image_path}: {img_err}")
+                                                continue
                         
+                        # Process with the processor using the extracted images
+                        data_inputs = processor(
+                            text=batch_prompts,
+                            images=all_images if all_images else None,
+                            return_tensors="pt",
+                            padding=True,
+                            truncation=True
+                        )
+
                         for k, v in data_inputs.items():
                             if torch.is_tensor(v):
                                 data_inputs[k] = v.to(model.device)
@@ -1557,7 +1596,7 @@ def evaluate_model(args):
                                     "parsed_output": str(parsed_output_single),
                                     "reference": str(parsed_reference_single),
                                     "valid_for_metrics": sample_valid,
-                                    "image_path": original_example["image"]
+                                    "image_path": original_example.get("images", [original_example.get("image", "unknown")])
                                 })
 
                             # Log occasional examples (consider adjusting frequency for batches)
@@ -1649,7 +1688,14 @@ def evaluate_model(args):
                 "task_details": {}
             }
             
-            for task_type in model_results["base_model"].keys():
+            # Get tasks to compare (either all tasks or just the specified one)
+            tasks_to_compare = list(model_results["base_model"].keys())
+            tasks_to_compare = [t for t in tasks_to_compare if t != "overall"]
+            
+            if args.task_type:
+                logger.info(f"Comparing only task type: {args.task_type}")
+            
+            for task_type in tasks_to_compare:
                 if task_type != "overall":
                     base_metrics = model_results["base_model"][task_type].get("metrics", {})
                     finetuned_metrics = model_results["finetuned_model"][task_type].get("metrics", {})
@@ -1902,6 +1948,10 @@ def create_evaluation_summary(args, model_results, start_time, log_filename):
             f.write(f"Base model path: {args.base_model_path}\n")
         f.write(f"Dataset: {args.processed_data_dir}\n")
         f.write(f"Max evaluation samples: {args.max_eval_samples if args.max_eval_samples > 0 else 'ALL'}\n")
+        if args.task_type:
+            f.write(f"Task type filter: {args.task_type} (evaluating only this task)\n")
+        else:
+            f.write("Task type filter: None (evaluating all tasks)\n")
         f.write("\n")
         
         if args.evaluate_base_model and "base_model" in model_results and "finetuned_model" in model_results:
@@ -1956,6 +2006,10 @@ def create_detailed_comparison_report(comparison, report_file, eval_start_time, 
             f.write(f"Base model path: {args.base_model_path}\n")
         f.write(f"Dataset: {args.processed_data_dir}\n")
         f.write(f"Max evaluation samples: {args.max_eval_samples if args.max_eval_samples > 0 else 'ALL'}\n")
+        if args.task_type:
+            f.write(f"Task type filter: {args.task_type} (evaluating only this task)\n")
+        else:
+            f.write("Task type filter: None (evaluating all tasks)\n")
         f.write("\n")
         
         f.write("Comparison Summary\n")
@@ -2088,8 +2142,10 @@ if __name__ == "__main__":
     parser.add_argument("--skip_base_model", action="store_true", help="Skip base model evaluation (only evaluate fine-tuned model)")
     parser.add_argument("--base_model_path", type=str, default="Qwen/Qwen2.5-VL-7B-Instruct", help="Path to the base model")
     parser.add_argument("--eval_batch_size", type=int, default=0, help="Batch size for evaluation (0 = auto-determine based on GPU memory)")
-    # ORIGINAL CODE (commented out - was for test/validation split selection):
-    # parser.add_argument("--eval_split", type=str, default="validation", choices=["validation", "test"], help="Which split to evaluate on")
+    parser.add_argument("--task_type", type=str, default=None, 
+                       choices=["classification", "multi-label", "detection", "instance_detection", 
+                               "counting", "regression", "report_generation"],
+                       help="Evaluate only a specific task type. If not specified, evaluates all tasks.")
     args = parser.parse_args()
     
     # Override evaluate_base_model if skip_base_model is specified
