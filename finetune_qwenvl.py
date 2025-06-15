@@ -60,44 +60,6 @@ torch.backends.cuda.enable_mem_efficient_sdp(True)
 
 os.makedirs("logs", exist_ok=True)
 
-# Add process_vision_info function for multi-image handling
-def process_vision_info(messages):
-    """Extract image and video inputs from messages for Qwen2.5-VL"""
-    image_inputs = []
-    video_inputs = []
-    
-    for message in messages:
-        if isinstance(message, dict) and "content" in message:
-            content = message["content"]
-            if isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict):
-                        if item.get("type") == "image":
-                            image_path = item.get("image", "")
-                            # Handle different image input formats
-                            if image_path.startswith("file://"):
-                                image_path = image_path[7:]  # Remove file:// prefix
-                            elif image_path.startswith("data:image"):
-                                # Base64 image - would need decoding
-                                logger.warning("Base64 images not yet supported in training")
-                                continue
-                            elif image_path.startswith("http"):
-                                # URL image - would need downloading
-                                logger.warning("URL images not yet supported in training")
-                                continue
-                            
-                            if os.path.exists(image_path):
-                                try:
-                                    img = Image.open(image_path).convert("RGB")
-                                    image_inputs.append(img)
-                                except Exception as e:
-                                    logger.error(f"Failed to load image {image_path}: {e}")
-                        elif item.get("type") == "video":
-                            # Video support could be added here
-                            video_inputs.append(item.get("video", ""))
-    
-    return image_inputs, video_inputs
-
 # Remove all existing handlers
 for handler in logging.root.handlers[:]:
     logging.root.removeHandler(handler)
