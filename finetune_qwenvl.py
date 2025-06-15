@@ -6,8 +6,12 @@ import io
 import gc
 from collections import OrderedDict
 import signal, psutil, sys
+import warnings
 
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:False,max_split_size_mb:512"
+# Suppress the specific FutureWarning from torch.utils.checkpoint, which is not actionable since it is a warning from the library
+warnings.filterwarnings("ignore", category=FutureWarning, message=r".*`torch.cpu.amp.autocast\(args\.\.\.\)` is deprecated.*")
+
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True" 
 
 if "CUDA_VISIBLE_DEVICES" not in os.environ:
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -50,17 +54,56 @@ try:
 except (ImportError, AttributeError):
     LANCZOS_RESAMPLING = Image.LANCZOS
 
-torch.backends.cuda.enable_flash_sdp(False)
-torch.backends.cuda.enable_mem_efficient_sdp(False)
+# Enable Flash Attention 2 for memory efficiency and speed
+torch.backends.cuda.enable_flash_sdp(True)
+torch.backends.cuda.enable_mem_efficient_sdp(True)
 
 os.makedirs("logs", exist_ok=True)
+
+# Add process_vision_info function for multi-image handling
+def process_vision_info(messages):
+    """Extract image and video inputs from messages for Qwen2.5-VL"""
+    image_inputs = []
+    video_inputs = []
+    
+    for message in messages:
+        if isinstance(message, dict) and "content" in message:
+            content = message["content"]
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get("type") == "image":
+                            image_path = item.get("image", "")
+                            # Handle different image input formats
+                            if image_path.startswith("file://"):
+                                image_path = image_path[7:]  # Remove file:// prefix
+                            elif image_path.startswith("data:image"):
+                                # Base64 image - would need decoding
+                                logger.warning("Base64 images not yet supported in training")
+                                continue
+                            elif image_path.startswith("http"):
+                                # URL image - would need downloading
+                                logger.warning("URL images not yet supported in training")
+                                continue
+                            
+                            if os.path.exists(image_path):
+                                try:
+                                    img = Image.open(image_path).convert("RGB")
+                                    image_inputs.append(img)
+                                except Exception as e:
+                                    logger.error(f"Failed to load image {image_path}: {e}")
+                        elif item.get("type") == "video":
+                            # Video support could be added here
+                            video_inputs.append(item.get("video", ""))
+    
+    return image_inputs, video_inputs
 
 # Remove all existing handlers
 for handler in logging.root.handlers[:]:
     logging.root.removeHandler(handler)
 
 # Create a FileHandler for all logs (INFO and above)
-log_filename = os.path.join("logs", f"finetune_optimized_{time.strftime('%Y%m%d_%H%M%S')}.log")
+log_filename = os.path.join("logs", f"finetune_{time.strftime('%Y%m%d_%H%M%S')}.log")
 file_handler = logging.FileHandler(log_filename)
 file_handler.setLevel(logging.INFO)
 file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
@@ -83,13 +126,6 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
 
 # Add warning filters
-import warnings
-warnings.filterwarnings("ignore", message="You passed `remove_unused_columns=False`")
-warnings.filterwarnings("ignore", message="None of the inputs have requires_grad=True")
-warnings.filterwarnings("ignore", message="You have video processor config saved in `preprocessor.json`")
-warnings.filterwarnings("ignore", message="`torch.cpu.amp.autocast` is deprecated")
-warnings.filterwarnings("ignore", message="No label_names provided for model class")
-
 def worker_init_fn(worker_id):
     """Worker initialization for multiprocessing with PEFT models"""
     # Set random seeds for reproducibility
@@ -164,14 +200,15 @@ class FastImageLoader:
             "size_mb": self.current_size_mb
         }
 
-class OptimizedMultimodalDataCollator:
-    """Optimized data collator with proper Qwen2.5-VL image/token handling"""
-    def __init__(self, tokenizer, processor, model=None, max_seq_length=4096, 
-                 image_cache_size_mb=2048):
+class MultimodalDataCollator:
+    """Data collator with proper Qwen2.5-VL image/token handling"""
+    def __init__(self, tokenizer, processor, model=None, max_seq_length=2048, 
+                 image_cache_size_mb=2048, image_size=448, max_images_per_sample=0):
         self.tokenizer = tokenizer
         self.processor = processor
         self.model = model
         self.max_seq_length = max_seq_length
+        self.image_size = image_size
         self.image_loader = FastImageLoader(cache_size_mb=image_cache_size_mb)
         
         # Processing cache for tokenized results
@@ -195,6 +232,8 @@ class OptimizedMultimodalDataCollator:
         # Error tracking
         self.error_count = 0
         self.total_batches = 0
+        
+        self.max_images_per_sample = max_images_per_sample
     
     def _configure_processor(self):
         """Properly configure processor for consistent tokenization"""
@@ -202,14 +241,14 @@ class OptimizedMultimodalDataCollator:
             # Set consistent image size
             try:
                 # Prefer explicit dict
-                self.processor.image_processor.size = {"height": 448, "width": 448}
+                self.processor.image_processor.size = {"height": self.image_size, "width": self.image_size}
                 logger.info("Set processor size to dict format")
                 
                 # Set pixel limits safely
                 if hasattr(self.processor.image_processor, 'max_pixels'):
-                    self.processor.image_processor.max_pixels = 448 * 448
+                    self.processor.image_processor.max_pixels = self.image_size * self.image_size
                 if hasattr(self.processor.image_processor, 'min_pixels'):
-                    self.processor.image_processor.min_pixels = 448 * 448
+                    self.processor.image_processor.min_pixels = self.image_size * self.image_size
                 
                 # Set processing flags safely
                 if hasattr(self.processor.image_processor, 'do_resize'):
@@ -221,7 +260,7 @@ class OptimizedMultimodalDataCollator:
                 logger.warning(f"Could not fully configure processor: {config_error}")
                 logger.info("Will rely on manual image preprocessing")
             
-            logger.info(f"Processor configured with 448x448 resolution for stable tokenization")
+            logger.info(f"Processor configured with {self.image_size}x{self.image_size} resolution for stable tokenization")
     
     def _validate_inputs(self, inputs):
         """Validate inputs to catch token/feature mismatches early"""
@@ -297,7 +336,7 @@ class OptimizedMultimodalDataCollator:
                         image = self.image_loader.load_image(img_path)
                         
                         # Ensure consistent image size before processing
-                        target_size = (448, 448)
+                        target_size = (self.image_size, self.image_size)
                         
                         # Safely get image size
                         if isinstance(image, np.ndarray):
@@ -352,11 +391,13 @@ class OptimizedMultimodalDataCollator:
                     logger.warning(f"No valid images found for example {idx}, skipping")
                     continue
                 
-                # For now, use only the first image (QWen2.5-VL single image mode)
-                # TODO: Implement multi-image support when needed
-                batch_images.append(example_images[0])
-                if len(example_images) > 1:
-                    logger.debug(f"Example {idx} has {len(example_images)} images, using first image only")
+                # Limit images per sample if configured
+                if self.max_images_per_sample > 0 and len(example_images) > self.max_images_per_sample:
+                    example_images = example_images[:self.max_images_per_sample]
+                    logger.debug(f"Limited example {idx} to {self.max_images_per_sample} images")
+                
+                # Support multi-image examples
+                batch_images.append(example_images)  # Keep all images, not just first
                 
                 # Get messages - handle both old and new formats
                 if "messages" in example:
@@ -366,7 +407,8 @@ class OptimizedMultimodalDataCollator:
                     messages = create_prompt_with_answer({
                         "question": example["question"],
                         "answer": example["answer"],
-                        "task_type": example["task_type"]
+                        "task_type": example["task_type"],
+                        "num_images": len(example_images)  # Pass number of images
                     })["messages"]
                 
                 batch_messages.append(messages)
@@ -393,11 +435,33 @@ class OptimizedMultimodalDataCollator:
             # Apply chat template to each message set
             batch_texts = []
             batch_assistant_starts = []  # Track where assistant response starts for label masking
+            batch_processed_images = []  # Store processed images per example
             
-            for messages in batch_messages:
+            for idx, (messages, images_list) in enumerate(zip(batch_messages, batch_images)):
                 try:
+                    # For multi-image support, we need to properly format the messages
+                    # with the actual image placeholders
+                    if isinstance(images_list, list) and len(images_list) > 1:
+                        # Multi-image case - ensure message content has correct number of image entries
+                        user_message = messages[0]
+                        if "content" in user_message:
+                            content = user_message["content"]
+                            # Count existing image entries
+                            image_entries = [item for item in content if item.get("type") == "image"]
+                            
+                            # If mismatch, rebuild content with correct number of images
+                            if len(image_entries) != len(images_list):
+                                new_content = []
+                                # Add all images
+                                for _ in images_list:
+                                    new_content.append({"type": "image"})
+                                # Add text content
+                                for item in content:
+                                    if item.get("type") == "text":
+                                        new_content.append(item)
+                                messages[0]["content"] = new_content
+                    
                     # Apply chat template with proper formatting
-                    # NOTE: This is applied twice per sample (once here, once in processor). Could be optimized by caching.
                     full_text = self.tokenizer.apply_chat_template(
                         messages,
                         tokenize=False,
@@ -419,35 +483,58 @@ class OptimizedMultimodalDataCollator:
                         logger.warning("Could not find assistant start position - will mask entire sequence")
                         assistant_start_pos = len(full_text)  # Mask everything
                     
+
                     batch_texts.append(full_text)
                     batch_assistant_starts.append(assistant_start_pos)
+                    batch_processed_images.append(images_list)
                     
                 except Exception as template_error:
                     logger.error(f"Chat template error: {template_error}")
                     # Fallback format
                     user_content = messages[0]["content"]
                     text_content = ""
+                    num_images = 0
                     for content in user_content:
                         if content["type"] == "text":
                             text_content = content["text"]
-                            break
+                        elif content["type"] == "image":
+                            num_images += 1
                     
                     assistant_content = messages[1]["content"] if len(messages) > 1 else ""
                     
-                    full_text = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{text_content}<|im_end|>\n<|im_start|>assistant\n{assistant_content}<|im_end|>"
+                    # Build image placeholders for multi-image support
+                    image_placeholders = ""
+                    for i in range(max(1, num_images)):  # At least one image placeholder
+                        image_placeholders += "<|vision_start|><|image_pad|><|vision_end|>"
+                    
+                    full_text = f"<|im_start|>user\n{image_placeholders}{text_content}<|im_end|>\n<|im_start|>assistant\n{assistant_content}<|im_end|>"
                     assistant_start_pos = full_text.find("<|im_start|>assistant\n") + len("<|im_start|>assistant\n")
                     
                     batch_texts.append(full_text)
                     batch_assistant_starts.append(assistant_start_pos)
+                    batch_processed_images.append(images_list)
+            
+            # Flatten images for processor (it expects a flat list)
+            # batch_images is now a list of lists, we need to flatten it
+            flattened_images = []
+            image_counts = []  # Track how many images per example
+            for images_list in batch_images:
+                if isinstance(images_list, list):
+                    flattened_images.extend(images_list)
+                    image_counts.append(len(images_list))
+                else:
+                    # Single image case (backward compatibility)
+                    flattened_images.append(images_list)
+                    image_counts.append(1)
             
             # Process with the tokenizer and processor
             inputs = self.processor(
                 text=batch_texts,
-                images=batch_images,
+                images=flattened_images if flattened_images else None,
                 return_tensors="pt",
                 padding=True,
-                truncation=True,
-                max_length=self.max_seq_length,
+                truncation=False,  # Disabled to avoid processor bug with multi-image
+                # max_length=self.max_seq_length, # Let SFTTrainer handle truncation
             )
             
             # Create proper labels that only learn from assistant responses
@@ -501,18 +588,29 @@ class OptimizedMultimodalDataCollator:
                 sample_text = batch_texts[0]
                 sample_labels = labels[0]
                 sample_input_ids = inputs["input_ids"][0]
+                sample_images = batch_processed_images[0] if batch_processed_images else []
                 
                 # Count masked vs unmasked tokens
                 total_tokens = len(sample_labels)
                 masked_tokens = (sample_labels == -100).sum().item()
                 learning_tokens = total_tokens - masked_tokens
                 
+                # Count images in this sample
+                num_images = len(sample_images) if isinstance(sample_images, list) else 1
+                
                 logger.info(f"TRAINING SAMPLE DEBUG (batch {self.total_batches}):")
+                logger.info(f"  Number of images: {num_images}")
                 logger.info(f"  Total tokens: {total_tokens}")
                 logger.info(f"  Masked tokens (ignored): {masked_tokens}")
                 logger.info(f"  Learning tokens (assistant): {learning_tokens}")
                 logger.info(f"  Learning ratio: {learning_tokens/total_tokens:.2%}")
                 logger.info(f"  Text preview: {sample_text[:200]}...")
+                
+                # Log multi-image statistics for the batch
+                if any(len(imgs) > 1 if isinstance(imgs, list) else False for imgs in batch_processed_images):
+                    multi_image_counts = [len(imgs) if isinstance(imgs, list) else 1 for imgs in batch_processed_images]
+                    logger.info(f"  Multi-image samples in batch: {sum(1 for c in multi_image_counts if c > 1)}")
+                    logger.info(f"  Image counts per sample: {multi_image_counts}")
                 
                 if learning_tokens == 0:
                     logger.error("WARNING: No tokens to learn from! All tokens masked!")
@@ -594,6 +692,7 @@ def create_prompt_with_answer(row):
         task_type = str(raw_task_type).lower().strip().replace("_", " ").replace("-", " ")
     question = row['question'].strip()
     answer = row['answer'].strip()
+    num_images = row.get('num_images', 1)  # Get number of images, default to 1
     
     # Create task-specific instructions for better performance
     if task_type == "classification":
@@ -614,18 +713,25 @@ def create_prompt_with_answer(row):
         instruction = "Look at the image and answer the question accurately based on what you observe."
         logger.warning(f"Unknown task type '{row['task_type']}' (normalized: '{task_type}') - using default instruction")
     
+    # Adjust instruction for multiple images
+    if num_images > 1:
+        instruction = instruction.replace("the image", "the images").replace("this image", "these images")
+    
     # Create proper chat format for training
     # The tokenizer.apply_chat_template will handle the proper format
     full_question = f"{instruction}\n\n{question}"
+    
+    # Build content list with multiple images if needed
+    content = []
+    for i in range(num_images):
+        content.append({"type": "image"})
+    content.append({"type": "text", "text": full_question})
     
     return {
         "messages": [
             {
                 "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text", "text": full_question}
-                ]
+                "content": content
             },
             {
                 "role": "assistant", 
@@ -671,36 +777,7 @@ def cleanup_memory():
     gc.collect()
     logger.info("Memory cleanup completed")
 
-def get_optimal_batch_settings(available_memory_gb, post_model_loading=False):
-    """Determine optimal batch settings based on available memory"""
-    logger.info(f"Determining optimal batch settings. Available GPU RAM: {available_memory_gb:.2f} GB. Post-model loading: {post_model_loading}")
-    
-    if post_model_loading:
-        if available_memory_gb >= 25:
-            batch_size = 4
-            grad_acc_steps = 8
-            max_seq_length = 4096
-            logger.info(f"Optimal: batch_size=4, grad_acc=8, effective_batch=32, max_seq_length=4096.")
-        elif available_memory_gb >= 20:
-            batch_size = 3
-            grad_acc_steps = 11
-            max_seq_length = 4096
-            logger.info(f"High memory: batch_size=3, grad_acc=11, effective_batch=33, max_seq_length=4096.")
-        else:
-            batch_size = 2
-            grad_acc_steps = 16
-            max_seq_length = 4096
-            logger.info(f"Moderate memory: batch_size=2, grad_acc=16, effective_batch=32, max_seq_length=4096.")
-    else:
-        batch_size = 4
-        grad_acc_steps = 8
-        max_seq_length = 4096
-        logger.info(f"Pre-model estimation: batch_size=4, grad_acc=8, max_seq_length=4096.")
-        
-    effective_batch_size = batch_size * grad_acc_steps
-    logger.info(f"Batch settings: batch_size={batch_size}, grad_acc={grad_acc_steps}, "
-               f"effective_batch={effective_batch_size}, max_seq_length={max_seq_length}")
-    return batch_size, grad_acc_steps, max_seq_length
+
 
 LOCK_PATH = "/tmp/qwenvl_train.lock"
 
@@ -735,13 +812,6 @@ def main(args):
             if available_memory < 4:
                 logger.error(f"Insufficient GPU memory available: {available_memory:.2f} GB")
                 return
-            
-            # Get optimal settings
-            optimal_batch_size, optimal_grad_acc, optimal_max_seq = get_optimal_batch_settings(available_memory)
-            
-            args.batch_size = optimal_batch_size
-            args.gradient_accumulation_steps = optimal_grad_acc
-            args.max_seq_length = optimal_max_seq
             
             cleanup_memory()
         else:
@@ -796,7 +866,7 @@ def main(args):
         logger.info("Configuring processor to prevent token/feature mismatch...")
         if hasattr(processor, 'image_processor'):
             # Set fixed resolution to prevent dynamic resizing
-            fixed_size = 448
+            fixed_size = args.image_size
             processor.image_processor.size = {"height": fixed_size, "width": fixed_size}
             processor.image_processor.max_pixels = fixed_size * fixed_size
             processor.image_processor.min_pixels = fixed_size * fixed_size
@@ -841,14 +911,17 @@ def main(args):
         # Re-check memory after model loading
         cleanup_memory()
         available_memory_post, _ = get_available_gpu_memory()
+        logger.info(f"Available GPU memory after model loading: {available_memory_post:.2f} GB")
         
-        # Re-optimize batch settings
-        post_optimal_batch_size, post_optimal_grad_acc, _ = get_optimal_batch_settings(
-            available_memory_post, post_model_loading=True
-        )
+        # Warn about potential OOM with multi-image data
+        if args.batch_size > 1:
+            logger.warning(f"Using batch_size={args.batch_size} with multi-image data. "
+                         f"If you encounter OOM errors, consider reducing to batch_size=1 "
+                         f"or limiting images with --max_images_per_sample")
         
-        args.batch_size = post_optimal_batch_size
-        args.gradient_accumulation_steps = post_optimal_grad_acc
+        logger.info(f"Training settings: batch_size={args.batch_size}, "
+                   f"grad_acc={args.gradient_accumulation_steps}, "
+                   f"effective_batch={args.batch_size * args.gradient_accumulation_steps}")
         
         # Load datasets
         train_dataset, val_dataset = load_processed_datasets(args.processed_data_dir)
@@ -858,13 +931,15 @@ def main(args):
         image_cache_size_mb = min(8192, int(available_memory_post * 1024 * 0.20))
         logger.info(f"Using optimized {image_cache_size_mb} MB for image cache")
         
-        # Initialize optimized data collator
-        data_collator = OptimizedMultimodalDataCollator(
+        # Initialize data collator
+        data_collator = MultimodalDataCollator(
             tokenizer=tokenizer,
             processor=processor,
             model=model,
             max_seq_length=args.max_seq_length,
             image_cache_size_mb=image_cache_size_mb,
+            image_size=args.image_size,
+            max_images_per_sample=args.max_images_per_sample,
         )
         
         # Calculate training steps
@@ -880,7 +955,7 @@ def main(args):
             )
             callbacks.append(early_stopping_callback)
         
-        # Create SFTConfig with optimized settings
+        # Create SFTConfig
         logger.info("Creating training configuration")
         sft_config = SFTConfig(
             # SFT specific arguments
@@ -892,7 +967,7 @@ def main(args):
             output_dir=args.output_dir,
             learning_rate=args.learning_rate,  # Use command-line argument
             per_device_train_batch_size=args.batch_size,
-            per_device_eval_batch_size=2,
+            per_device_eval_batch_size=1,  # Set to 1 for memory safety
             gradient_accumulation_steps=args.gradient_accumulation_steps,
             num_train_epochs=args.num_epochs,
             weight_decay=args.weight_decay,  # Use command-line argument
@@ -912,9 +987,9 @@ def main(args):
             remove_unused_columns=False,
             report_to="wandb" if args.use_wandb else "none",
             run_name=args.run_name if args.use_wandb else None,
-            optim="adamw_8bit",
+            optim="paged_adamw_8bit",
             gradient_checkpointing=True,
-            gradient_checkpointing_kwargs={"use_reentrant": False},
+            gradient_checkpointing_kwargs={"use_reentrant": True},
             warmup_ratio=0.1,
             lr_scheduler_type="cosine",
             resume_from_checkpoint=args.resume_from_checkpoint,
@@ -928,7 +1003,7 @@ def main(args):
             # Performance settings
             tf32=False,
             skip_memory_metrics=True,
-            eval_accumulation_steps=8,
+            # eval_accumulation_steps=8, # Removed for simplicity and safety
             save_safetensors=True,
             
             # Additional optimizations
@@ -937,6 +1012,7 @@ def main(args):
             # neftune_noise_alpha=5,
             prediction_loss_only=True,
             include_inputs_for_metrics=False,
+            label_names=["labels"]
         )
         
         # Initialize SFT trainer
@@ -1018,19 +1094,24 @@ def main(args):
         raise
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Optimized Fine-tune QwenVL")
+    parser = argparse.ArgumentParser(description="Fine-tune QwenVL")
     parser.add_argument("--model_name_or_path", type=str, default="Qwen/Qwen2.5-VL-7B-Instruct")
     parser.add_argument("--processed_data_dir", type=str, default="processed_data_qwenvl")
     parser.add_argument("--output_dir", type=str, default="finetuned_qwenvl")
-    parser.add_argument("--batch_size", type=int, default=4)
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=8)
-    parser.add_argument("--learning_rate", type=float, default=1e-4)  # Match config.yaml
+    parser.add_argument("--batch_size", type=int, default=1, 
+                        help="Batch size per device. Default 1 for multi-image stability.")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=32,
+                        help="Gradient accumulation steps. Default 32 for effective batch size of 32.")
+    parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=0.01)
     parser.add_argument("--num_epochs", type=int, default=3)
-    parser.add_argument("--lora_rank", type=int, default=16)  # Match config.yaml
-    parser.add_argument("--lora_alpha", type=int, default=32)  # Match config.yaml
-    parser.add_argument("--lora_dropout", type=float, default=0.1)  # Match config.yaml
-    parser.add_argument("--max_seq_length", type=int, default=4096)
+    parser.add_argument("--lora_rank", type=int, default=16)
+    parser.add_argument("--lora_alpha", type=int, default=32)
+    parser.add_argument("--lora_dropout", type=float, default=0.1)
+    parser.add_argument("--max_seq_length", type=int, default=2048)
+    parser.add_argument("--image_size", type=int, default=448)
+    parser.add_argument("--max_images_per_sample", type=int, default=0, 
+                        help="Maximum images per sample (0=unlimited). Set to 1 or 2 to reduce memory usage.")
     parser.add_argument("--use_wandb", action="store_true")
     parser.add_argument("--run_name", type=str, default="qwenvl-medical")
     parser.add_argument("--save_steps", type=int, default=500)
