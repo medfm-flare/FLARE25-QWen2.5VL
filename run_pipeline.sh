@@ -29,6 +29,9 @@ MODEL_OUTPUT="finetuned_qwenvl"
 EVAL_OUTPUT="evaluation_results"
 USE_SUBSET=false
 MAX_SAMPLES=""
+SKIP_VALIDATION=false
+SKIP_INSTALL_TEST=false
+SKIP_DATASET_VALIDATION=false
 SKIP_PREPARE=false
 SKIP_TRAIN=false
 SKIP_EVAL=false
@@ -53,6 +56,18 @@ while [[ $# -gt 0 ]]; do
             MAX_SAMPLES="$2"
             shift 2
             ;;
+        --skip-validation)
+            SKIP_VALIDATION=true
+            shift
+            ;;
+        --skip-install-test)
+            SKIP_INSTALL_TEST=true
+            shift
+            ;;
+        --skip-dataset-validation)
+            SKIP_DATASET_VALIDATION=true
+            shift
+            ;;
         --skip-prepare)
             SKIP_PREPARE=true
             shift
@@ -72,15 +87,18 @@ while [[ $# -gt 0 ]]; do
         --help)
             echo "Usage: $0 [options]"
             echo "Options:"
-            echo "  --base-dir DIR         Base directory for datasets (default: organized_dataset)"
-            echo "  --output-dir DIR       Output directory for processed data (default: processed_data_qwenvl)"
-            echo "  --use-subset           Use only 3 datasets for testing"
-            echo "  --max-samples N        Maximum samples per dataset"
-            echo "  --skip-prepare         Skip data preparation step"
-            echo "  --skip-train           Skip training step"
-            echo "  --skip-eval            Skip evaluation step"
-            echo "  --num-epochs N         Number of training epochs (default: 3)"
-            echo "  --help                 Show this help message"
+            echo "  --base-dir DIR             Base directory for datasets (default: organized_dataset)"
+            echo "  --output-dir DIR           Output directory for processed data (default: processed_data_qwenvl)"
+            echo "  --use-subset               Use only 3 datasets for testing"
+            echo "  --max-samples N            Maximum samples per dataset"
+            echo "  --skip-validation          Skip all validation steps (install test + dataset validation)"
+            echo "  --skip-install-test        Skip installation testing step"
+            echo "  --skip-dataset-validation  Skip dataset validation step"
+            echo "  --skip-prepare             Skip data preparation step"
+            echo "  --skip-train               Skip training step"
+            echo "  --skip-eval                Skip evaluation step"
+            echo "  --num-epochs N             Number of training epochs (default: 3)"
+            echo "  --help                     Show this help message"
             exit 0
             ;;
         *)
@@ -110,6 +128,47 @@ mkdir -p logs
 mkdir -p $OUTPUT_DIR
 mkdir -p $MODEL_OUTPUT
 mkdir -p $EVAL_OUTPUT
+
+# Step 0: Validation Steps
+# Handle --skip-validation flag
+if [ "$SKIP_VALIDATION" = true ]; then
+    SKIP_INSTALL_TEST=true
+    SKIP_DATASET_VALIDATION=true
+fi
+
+# Step 0a: Installation Testing
+if [ "$SKIP_INSTALL_TEST" = false ]; then
+    print_status "Step 0a: Testing installation..."
+    
+    TEST_INSTALL_CMD="python test_installation.py"
+    
+    print_status "Running: $TEST_INSTALL_CMD"
+    if $TEST_INSTALL_CMD; then
+        print_status "Installation test completed successfully!"
+    else
+        print_error "Installation test failed!"
+        exit 1
+    fi
+else
+    print_warning "Skipping installation test step"
+fi
+
+# Step 0b: Dataset Validation
+if [ "$SKIP_DATASET_VALIDATION" = false ]; then
+    print_status "Step 0b: Validating dataset..."
+    
+    VALIDATE_CMD="python validate_dataset.py --base_dir $BASE_DIR --check_images"
+    
+    print_status "Running: $VALIDATE_CMD"
+    if $VALIDATE_CMD; then
+        print_status "Dataset validation completed successfully!"
+    else
+        print_error "Dataset validation failed!"
+        exit 1
+    fi
+else
+    print_warning "Skipping dataset validation step"
+fi
 
 # Step 1: Data Preparation
 if [ "$SKIP_PREPARE" = false ]; then
