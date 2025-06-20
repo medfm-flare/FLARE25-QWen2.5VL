@@ -3,21 +3,24 @@
 Inference Script for Fine-tuned QWen2.5VL Medical Model
 ======================================================
 
-This script demonstrates how to use the fine-tuned QWen2.5VL model for various
-medical imaging tasks including classification, detection, and report generation.
+This script runs inference on the FLARE 2025 validation-hidden dataset
+and generates predictions.json file for challenge submission.
+
+The script automatically:
+- Finds all *_questions_val.json files in validation-hidden/ folder
+- Excludes files ending with "withGT" 
+- Processes all question-image pairs using the FLARE dataset format
+- Outputs a single predictions.json file with all predicted answers
 
 Usage:
-    # Basic inference
-    python inference.py --image_path xray.jpg --task classification --prompt "What abnormalities are present?"
+    # Using fine-tuned model
+    python inference.py --dataset_path organized_dataset --lora_weights finetuned_qwenvl/final
     
-    # Batch inference
-    python inference.py --image_folder ./images --task report_generation --output results.json
+    # Using base model only
+    python inference.py --dataset_path organized_dataset --model_name Qwen/Qwen2.5-VL-7B-Instruct
     
-    # Using HuggingFace model
-    python inference.py --model_name leoyinn/qwen2.5vl-flare2025 --image_path mri.jpg
-
-    # Using question file
-    python inference.py --output results.json --question_file ./questions.json --verbose
+    # With custom settings
+    python inference.py --dataset_path organized_dataset --lora_weights finetuned_qwenvl/final --max_tokens 128 --verbose
 """
 
 import os
@@ -89,17 +92,12 @@ class MedicalVLMInference:
         """Load the model, tokenizer, and processor."""
         logger.info(f"Loading model from {self.model_name_or_path}")
         
-        # Determine if using local checkpoint or HF model
-        is_local = Path(self.model_name_or_path).exists()
+        # Determine if using local LoRA checkpoint or base model
+        is_local_lora = Path(self.model_name_or_path).exists() and (
+            Path(self.model_name_or_path) / "adapter_config.json"
+        ).exists()
         
-        if is_local:
-            # Load from local checkpoint
-            base_model_name = "Qwen/Qwen2.5-VL-7B-Instruct"
-            adapter_path = self.model_name_or_path
-        else:
-            # Load from HuggingFace
-            base_model_name = "Qwen/Qwen2.5-VL-7B-Instruct"
-            adapter_path = self.model_name_or_path
+        base_model_name = "Qwen/Qwen2.5-VL-7B-Instruct"
         
         # Load tokenizer and processor
         self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
@@ -117,21 +115,35 @@ class MedicalVLMInference:
         
         # Load base model
         logger.info("Loading base model...")
-        self.model = AutoModelForVision2Seq.from_pretrained(
-            base_model_name,
-            quantization_config=quantization_config,
-            device_map=self.device if self.device != "cpu" else None,
-            torch_dtype=torch.float16 if self.device != "cpu" else torch.float32,
-            max_memory=max_memory
-        )
+        try:
+            from transformers import Qwen2_5_VLForConditionalGeneration
+            self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                base_model_name,
+                quantization_config=quantization_config,
+                device_map=self.device if self.device != "cpu" else None,
+                torch_dtype=torch.float16 if self.device != "cpu" else torch.float32,
+                max_memory=max_memory
+            )
+        except ImportError:
+            # Fallback to AutoModelForVision2Seq
+            self.model = AutoModelForVision2Seq.from_pretrained(
+                base_model_name,
+                quantization_config=quantization_config,
+                device_map=self.device if self.device != "cpu" else None,
+                torch_dtype=torch.float16 if self.device != "cpu" else torch.float32,
+                max_memory=max_memory
+            )
         
-        # Load adapter
-        logger.info("Loading fine-tuned adapter...")
-        self.model = PeftModel.from_pretrained(
-            self.model, 
-            adapter_path,
-            device_map=self.device if self.device != "cpu" else None
-        )
+        # Load LoRA adapter if provided
+        if is_local_lora:
+            logger.info(f"Loading LoRA adapter from {self.model_name_or_path}")
+            self.model = PeftModel.from_pretrained(
+                self.model, 
+                self.model_name_or_path,
+                device_map=self.device if self.device != "cpu" else None
+            )
+        elif self.model_name_or_path != base_model_name:
+            logger.warning(f"Model path {self.model_name_or_path} does not appear to be a LoRA adapter. Using base model only.")
         
         # Set to evaluation mode
         self.model.eval()
@@ -143,37 +155,31 @@ class MedicalVLMInference:
             "classification": {
                 "prompt_template": "Analyze this medical image and classify it. What is the primary diagnosis or finding?",
                 "max_tokens": 128,
-                "temperature": 0.1,
                 "parse_fn": self._parse_classification
             },
             "multi_label": {
                 "prompt_template": "List all abnormalities and findings present in this medical image. Be comprehensive.",
                 "max_tokens": 256,
-                "temperature": 0.2,
                 "parse_fn": self._parse_multi_label
             },
             "detection": {
                 "prompt_template": "Identify and locate all abnormalities in this medical image. Provide bounding box coordinates in format [x1,y1,x2,y2] for each finding.",
                 "max_tokens": 512,
-                "temperature": 0.1,
                 "parse_fn": self._parse_detection
             },
             "counting": {
                 "prompt_template": "Count the number of {target} in this medical image. Provide only the numerical count.",
                 "max_tokens": 32,
-                "temperature": 0.0,
                 "parse_fn": self._parse_counting
             },
             "report_generation": {
                 "prompt_template": "Generate a comprehensive medical report for this image. Include findings, impressions, and recommendations.",
                 "max_tokens": 1024,
-                "temperature": 0.3,
                 "parse_fn": self._parse_report
             },
             "vqa": {
                 "prompt_template": "{question}",
                 "max_tokens": 256,
-                "temperature": 0.2,
                 "parse_fn": lambda x: x.strip()
             }
         }
@@ -254,8 +260,6 @@ class MedicalVLMInference:
             outputs = self.model.generate(
                 **inputs,
                 max_new_tokens=kwargs.get("max_tokens", task_config["max_tokens"]),
-                temperature=kwargs.get("temperature", task_config["temperature"]),
-                do_sample=kwargs.get("temperature", task_config["temperature"]) > 0,
                 top_p=kwargs.get("top_p", 0.9),
                 num_beams=kwargs.get("num_beams", 1),
                 eos_token_id=self.tokenizer.eos_token_id,
@@ -280,7 +284,6 @@ class MedicalVLMInference:
             "parsed_result": parsed_result,
             "metadata": {
                 "model": self.model_name_or_path,
-                "temperature": kwargs.get("temperature", task_config["temperature"]),
                 "max_tokens": kwargs.get("max_tokens", task_config["max_tokens"])
             }
         }
@@ -481,51 +484,33 @@ def create_example_prompts() -> Dict[str, List[Dict[str, str]]]:
     }
 
 def main():
-    parser = argparse.ArgumentParser(description="Medical VLM Inference")
+    parser = argparse.ArgumentParser(description="FLARE 2025 Challenge Inference")
     
     # Model arguments
     parser.add_argument("--model_name", type=str, 
                        default="Qwen/Qwen2.5-VL-7B-Instruct",
                        help="Model name on HuggingFace or local checkpoint path")
+    parser.add_argument("--lora_weights", type=str,
+                       help="Path to LoRA weights/adapter")
     parser.add_argument("--device", type=str, default="auto",
                        choices=["cuda", "cpu", "auto"],
                        help="Device to use for inference")
     parser.add_argument("--no_quantize", action="store_true",
                        help="Disable 4-bit quantization")
     
-    # Input arguments
-    parser.add_argument("--image_path", type=str,
-                       help="Path to single image")
-    parser.add_argument("--image_folder", type=str,
-                       help="Path to folder containing images")
-    parser.add_argument("--file_pattern", type=str, default="*.{jpg,jpeg,png,dcm}",
-                       help="File pattern for batch processing")
-    parser.add_argument("--questions_file", type=str,
-                       help="JSON file with image-question pairs for batch processing")
-    
-    # Task arguments
-    parser.add_argument("--task", type=str, default="report_generation",
-                       choices=["classification", "multi_label", "detection", 
-                               "counting", "report_generation", "vqa"],
-                       help="Task to perform")
-    parser.add_argument("--prompt", type=str,
-                       help="Custom prompt (overrides task default)")
-    parser.add_argument("--question", type=str,
-                       help="Question for VQA task")
-    parser.add_argument("--target", type=str,
-                       help="Target object for counting task")
+    # Dataset arguments
+    parser.add_argument("--dataset_path", type=str, required=True,
+                       help="Path to organized_dataset folder")
+    parser.add_argument("--output_file", type=str, default="predictions.json",
+                       help="Output predictions file")
     
     # Generation arguments
-    parser.add_argument("--max_tokens", type=int,
-                       help="Maximum tokens to generate")
-    parser.add_argument("--temperature", type=float,
-                       help="Sampling temperature")
     parser.add_argument("--batch_size", type=int, default=1,
-                       help="Batch size for processing multiple images")
+                       help="Batch size for processing")
+    parser.add_argument("--max_tokens", type=int, default=256,
+                       help="Maximum tokens to generate")
     
-    # Output arguments
-    parser.add_argument("--output", type=str,
-                       help="Output file path (JSON format)")
+    # Utility arguments
     parser.add_argument("--verbose", action="store_true",
                        help="Enable verbose output")
     
@@ -535,164 +520,186 @@ def main():
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
     
+    logger.info("FLARE 2025 Challenge Inference Started")
+    logger.info(f"Dataset path: {args.dataset_path}")
+    
     # Initialize model
     logger.info("Initializing model...")
-    model = MedicalVLMInference(
-        model_name_or_path=args.model_name,
-        device=args.device,
-        quantize=not args.no_quantize
-    )
-    
-    # Prepare images and questions
-    images = []
-    questions_data = []
-    
-    if args.questions_file:
-        # Load questions from file
-        logger.info(f"Loading questions from {args.questions_file}")
-        with open(args.questions_file, 'r') as f:
-            questions_data = json.load(f)
-        
-        # Extract images from questions data (support multiple formats)
-        images = []
-        for item in questions_data:
-            # Support different field names for image path
-            image_path = (item.get('image_path') or 
-                         item.get('image') or 
-                         item.get('ImageName') or
-                         item.get('imageName'))
-            images.append(image_path)
-        logger.info(f"Found {len(images)} image-question pairs")
-        
-    elif args.image_path:
-        images = [args.image_path]
-    elif args.image_folder:
-        folder = Path(args.image_folder)
-        patterns = args.file_pattern.strip("{}").split(",")
-        for pattern in patterns:
-            images.extend(folder.glob(f"**/{pattern}"))
-        images = [str(img) for img in images]
-        logger.info(f"Found {len(images)} images")
+    if args.lora_weights:
+        model = MedicalVLMInference(
+            model_name_or_path=args.lora_weights,
+            device=args.device,
+            quantize=not args.no_quantize
+        )
     else:
-        logger.error("Please provide --image_path, --image_folder, or --questions_file")
+        model = MedicalVLMInference(
+            model_name_or_path=args.model_name,
+            device=args.device,
+            quantize=not args.no_quantize
+        )
+    
+    # Find all validation question files
+    dataset_path = Path(args.dataset_path)
+    validation_hidden_path = dataset_path / "validation-hidden"
+    
+    if not validation_hidden_path.exists():
+        logger.error(f"validation-hidden folder not found at {validation_hidden_path}")
         return
     
-    # Run inference
-    logger.info(f"Running {args.task} inference on {len(images)} image(s)...")
-    
-    # Prepare kwargs
-    inference_kwargs = {}
-    if args.max_tokens:
-        inference_kwargs["max_tokens"] = args.max_tokens
-    if args.temperature is not None:
-        inference_kwargs["temperature"] = args.temperature
-    if args.question:
-        inference_kwargs["question"] = args.question
-    if args.target:
-        inference_kwargs["target"] = args.target
-    
-    # Process images
-    results = []
-    
-    if args.questions_file:
-        # Process with individual questions from file
-        logger.info(f"Processing {len(questions_data)} image-question pairs...")
-        for item in tqdm(questions_data, desc="Processing"):
-            try:
-                # Support multiple field names for image path
-                image_path = (item.get('image_path') or 
-                             item.get('image') or 
-                             item.get('ImageName') or
-                             item.get('imageName'))
-                
-                # Support multiple field names for question
-                question = (item.get('question') or 
-                           item.get('prompt') or 
-                           item.get('Question'))
-                
-                # Map TaskType to task (with fallback)
-                task_mapping = {
-                    'Detection': 'detection',
-                    'Classification': 'classification', 
-                    'Multi-label Classification': 'multi_label',
-                    'Instance Detection': 'detection',
-                    'Cell Counting': 'counting',
-                    'Regression': 'vqa',
-                    'Report Generation': 'report_generation'
-                }
-                
-                task_type = item.get('TaskType', item.get('task', args.task))
-                task = task_mapping.get(task_type, task_type.lower() if isinstance(task_type, str) else args.task)
-                
-                # Override inference_kwargs with item-specific values
-                item_kwargs = inference_kwargs.copy()
-                if 'max_tokens' in item:
-                    item_kwargs['max_tokens'] = item['max_tokens']
-                if 'temperature' in item:
-                    item_kwargs['temperature'] = item['temperature']
-                if 'target' in item:
-                    item_kwargs['target'] = item['target']
-                
-                result = model.inference(
-                    image_path,
-                    task=task,
-                    prompt=question,
-                    **item_kwargs
-                )
-                
-                # Add original question data to result
-                result['original_item'] = item
-                results.append(result)
-                
-            except Exception as e:
-                logger.error(f"Error processing item {item}: {e}")
-                image_path = (item.get('image_path') or 
-                             item.get('image') or 
-                             item.get('ImageName') or
-                             item.get('imageName') or 'unknown')
-                results.append({
-                    "image_path": image_path,
-                    "error": str(e),
-                    "original_item": item
-                })
-    else:
-        # Standard processing
-        if len(images) == 1:
-            result = model.inference(
-                images[0],
-                task=args.task,
-                prompt=args.prompt,
-                **inference_kwargs
-            )
-            results = [result]
-        else:
-            results = model.batch_inference(
-                images,
-                task=args.task,
-                prompt=args.prompt,
-                batch_size=args.batch_size,
-                **inference_kwargs
-            )
-    
-    # Display results
-    for result in results:
-        if "error" in result:
-            logger.error(f"Error processing {result['image_path']}: {result['error']}")
-        else:
-            logger.info(f"\nImage: {result['image_path']}")
-            logger.info(f"Task: {result['task']}")
-            logger.info(f"Result: {json.dumps(result['parsed_result'], indent=2)}")
-            if args.verbose:
-                logger.info(f"Raw response: {result['raw_response']}")
-    
-    # Save results
-    if args.output:
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Find all question files (exclude withGT files)
+    question_files = []
+    for modality_dir in validation_hidden_path.iterdir():
+        if not modality_dir.is_dir():
+            continue
         
-        with open(output_path, 'w') as f:
-            json.dump(results, f, indent=2)
-        logger.info(f"Results saved to {output_path}")
+        for dataset_dir in modality_dir.iterdir():
+            if not dataset_dir.is_dir():
+                continue
+            
+            # Look for question files
+            for file_path in dataset_dir.glob("*_questions_val.json"):
+                if "withGT" not in file_path.name:
+                    question_files.append(file_path)
+    
+    if not question_files:
+        logger.error("No validation question files found")
+        return
+    
+    logger.info(f"Found {len(question_files)} question files to process")
+    
+    # Process all question files
+    all_predictions = []
+    
+    for question_file in tqdm(question_files, desc="Processing datasets"):
+        logger.info(f"Processing {question_file}")
+        
+        try:
+            # Load questions
+            with open(question_file, 'r') as f:
+                questions = json.load(f)
+            
+            # Get dataset info
+            modality = question_file.parent.parent.name
+            dataset_name = question_file.parent.name
+            image_dir = question_file.parent / "imagesVal"
+            
+            if not image_dir.exists():
+                logger.error(f"Image directory not found: {image_dir}")
+                continue
+            
+            logger.info(f"Processing {len(questions)} questions from {modality}/{dataset_name}")
+            
+            # Process each question
+            for question_data in tqdm(questions, desc=f"{dataset_name}", leave=False):
+                try:
+                    # Get image path
+                    image_name = question_data["ImageName"]
+                    if image_name.startswith("imagesVal/"):
+                        image_name = image_name.replace("imagesVal/", "")
+                    
+                    image_path = image_dir / image_name
+                    
+                    if not image_path.exists():
+                        logger.warning(f"Image not found: {image_path}")
+                        # Add empty prediction
+                        prediction = question_data.copy()
+                        prediction["Answer"] = ""
+                        all_predictions.append(prediction)
+                        continue
+                    
+                    # Map TaskType to internal task format
+                    task_mapping = {
+                        'classification': 'classification',
+                        'Classification': 'classification',
+                        'Multi-label Classification': 'multi_label',
+                        'Detection': 'detection',
+                        'Instance Detection': 'detection',
+                        'Cell Counting': 'counting',
+                        'Regression': 'vqa',
+                        'Report Generation': 'report_generation'
+                    }
+                    
+                    task_type = question_data.get("TaskType", "classification")
+                    internal_task = task_mapping.get(task_type, "classification")
+                    
+                    # Run inference
+                    result = model.inference(
+                        image=str(image_path),
+                        task=internal_task,
+                        prompt=question_data["Question"],
+                        max_tokens=args.max_tokens
+                    )
+                    
+                    # Extract answer based on task type
+                    if internal_task == "classification":
+                        # For classification, try to extract the letter option
+                        raw_answer = result["parsed_result"].get("diagnosis", result["raw_response"])
+                        
+                        # Try to find option letter (A, B, C, etc.) in the response
+                        import re
+                        option_match = re.search(r'\b([A-K])\b', raw_answer)
+                        if option_match:
+                            answer = option_match.group(1)
+                        else:
+                            # If no letter found, use the raw answer
+                            answer = raw_answer.strip()
+                    elif internal_task == "multi_label":
+                        findings = result["parsed_result"].get("findings", [])
+                        answer = "; ".join(findings) if findings else result["raw_response"].strip()
+                    elif internal_task == "detection":
+                        detections = result["parsed_result"].get("detections", [])
+                        if detections:
+                            # Format as coordinate list
+                            bbox_strings = []
+                            for det in detections:
+                                bbox = det.get("bbox", [])
+                                if len(bbox) == 4:
+                                    bbox_strings.append(f"[{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}]")
+                            answer = "; ".join(bbox_strings) if bbox_strings else result["raw_response"].strip()
+                        else:
+                            answer = result["raw_response"].strip()
+                    elif internal_task == "counting":
+                        count = result["parsed_result"].get("count", 0)
+                        answer = str(count)
+                    else:
+                        answer = result["raw_response"].strip()
+                    
+                    # Create prediction entry
+                    prediction = question_data.copy()
+                    prediction["Answer"] = answer
+                    all_predictions.append(prediction)
+                    
+                    if args.verbose:
+                        logger.info(f"Q: {question_data['Question'][:100]}...")
+                        logger.info(f"A: {answer}")
+                
+                except Exception as e:
+                    logger.error(f"Error processing question: {e}")
+                    # Add empty prediction for failed cases
+                    prediction = question_data.copy()
+                    prediction["Answer"] = ""
+                    all_predictions.append(prediction)
+        
+        except Exception as e:
+            logger.error(f"Error processing question file {question_file}: {e}")
+    
+    # Save all predictions
+    logger.info(f"Saving {len(all_predictions)} predictions to {args.output_file}")
+    
+    with open(args.output_file, 'w') as f:
+        json.dump(all_predictions, f, indent=2)
+    
+    logger.info("Inference Completed!")
+    
+    # Print summary
+    task_summary = {}
+    for pred in all_predictions:
+        task_type = pred.get("TaskType", "Unknown")
+        task_summary[task_type] = task_summary.get(task_type, 0) + 1
+    
+    logger.info("Summary by task type:")
+    for task_type, count in task_summary.items():
+        logger.info(f"  {task_type}: {count} predictions")
 
 if __name__ == "__main__":
     main() 

@@ -168,78 +168,64 @@ python evaluate_model.py \
 
 ### 4. Inference
 
-#### Basic Inference
+#### FLARE 2025 Challenge Inference
+
+For challenge submission, use the automatic dataset discovery:
 
 ```bash
-# Single image inference
+# Using fine-tuned model
 python inference.py \
-    --model_name finetuned_qwenvl/final \
-    --image_path chest_xray.jpg \
-    --task classification \
-    --prompt "What abnormalities are present in this chest X-ray?"
+    --dataset_path organized_dataset \
+    --lora_weights finetuned_qwenvl/final \
+    --output_file predictions.json
+
+# Using base model only
+python inference.py \
+    --dataset_path organized_dataset \
+    --model_name Qwen/Qwen2.5-VL-7B-Instruct \
+    --output_file predictions.json
 ```
 
-#### Batch Processing with Question File
+This automatically finds all `*_questions_val.json` files in `validation-hidden/` and outputs `predictions.json`.
 
-For processing multiple images with specific questions, use a JSON question file:
+#### Command Line Options
 
 ```bash
-python inference.py \
-    --model_name leoyinn/qwen2.5vl-flare2025 \
-    --questions_file questions.json \
-    --output results.json \
-    --verbose
+python inference.py [-h] --dataset_path DATASET_PATH [--model_name MODEL_NAME] [--lora_weights LORA_WEIGHTS]
+                    [--device {cuda,cpu,auto}] [--no_quantize] [--output_file OUTPUT_FILE] [--batch_size BATCH_SIZE]
+                    [--max_tokens MAX_TOKENS] [--temperature TEMPERATURE] [--verbose]
 ```
 
-#### Question File Format
+**Required:**
+- `--dataset_path`: Path to organized_dataset folder
+
+**Model Options:**
+- `--model_name`: Base model name (default: Qwen/Qwen2.5-VL-7B-Instruct)
+- `--lora_weights`: Path to LoRA weights/adapter
+- `--device`: Device to use (cuda/cpu/auto)
+- `--no_quantize`: Disable 4-bit quantization
+
+**Generation Options:**
+- `--output_file`: Output predictions file (default: predictions.json)
+- `--max_tokens`: Maximum tokens to generate (default: 256)
+- `--temperature`: Sampling temperature (default: 0.1)
+- `--verbose`: Enable verbose output
+
+#### Output Format
+
+The script outputs a single `predictions.json` file with the same structure as input questions but with filled `Answer` fields:
 
 ```json
 [
     {
-        "TaskType": "Classification",
-        "Modality": "Clinical",
-        "ImageName": "organized_dataset/training/Clinical/neojaundice/imagesTr/NeoJaundice_00001-1.jpg",
-        "Question": "Is therapeutic intervention required for this jaundiced newborn? A. No Treatment, B. Treatment Required",
-        "Split": "test"
-    },
-    {
-        "TaskType": "Detection",
-        "Modality": "Ultrasound",
-        "ImageName": "organized_dataset/testing/Ultrasound/iugc/imagesTs/IUGC_00577-18.png",
-        "Question": "Define the position of fetal head using its bounding box coordinates.",
-        "Split": "test"
+        "TaskType": "classification",
+        "Modality": "microscopy",
+        "ImageName": "imagesVal/bone_marrow_00056.jpg",
+        "Question": "Question: What diagnosis best fits the cellular pattern in this bone marrow? Options: A: Normal bone marrow B: Myelofibrosis...",
+        "Answer": "D",
+        "Split": "val"
     }
 ]
-```
-
-### Advanced Options
-
-```bash
-inference.py [-h] [--model_name MODEL_NAME] [--device {cuda,cpu,auto}] [--no_quantize] [--image_path IMAGE_PATH] [--image_folder IMAGE_FOLDER] [--file_pattern FILE_PATTERN]
-                    [--questions_file QUESTIONS_FILE] [--task {classification,multi_label,detection,counting,report_generation,vqa}] [--prompt PROMPT] [--question QUESTION]
-                    [--target TARGET] [--max_tokens MAX_TOKENS] [--temperature TEMPERATURE] [--batch_size BATCH_SIZE] [--output OUTPUT] [--verbose]
-```
-
-### Output Format
-
-The inference script produces structured JSON output:
-
-```json
-{
-    "image_path": "chest_xray.jpg",
-    "task": "classification",
-    "prompt": "What abnormalities are present?",
-    "raw_response": "The chest X-ray shows bilateral pulmonary infiltrates...",
-    "parsed_result": {
-        "diagnosis": "Bilateral pneumonia",
-        "confidence": 0.85
-    },
-    "metadata": {
-        "model": "leoyinn/qwen2.5vl-flare2025",
-        "temperature": 0.1,
-        "max_tokens": 128
-    }
-}
 ```
 
 ## Pre-trained Baseline Model
@@ -389,3 +375,4 @@ The FLARE 2025 datasets can be accessed at:
 - FLARE 2025 organizers for the dataset and challenge
 - HuggingFace for the transformers library and model hosting
 - Medical imaging communities for the public datasets 
+
