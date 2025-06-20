@@ -434,55 +434,6 @@ class MedicalVLMInference:
             "full_text": response.strip()
         }
 
-def create_example_prompts() -> Dict[str, List[Dict[str, str]]]:
-    """Create example prompts for different medical imaging scenarios."""
-    return {
-        "chest_xray": [
-            {
-                "task": "classification",
-                "prompt": "Classify this chest X-ray. Is it normal or abnormal? If abnormal, what is the primary finding?"
-            },
-            {
-                "task": "multi_label",
-                "prompt": "List all abnormalities visible in this chest X-ray including pneumonia, effusion, cardiomegaly, or other findings."
-            },
-            {
-                "task": "report_generation",
-                "prompt": "Generate a radiology report for this chest X-ray including findings and impression."
-            }
-        ],
-        "fundus": [
-            {
-                "task": "classification",
-                "prompt": "Analyze this fundus image for diabetic retinopathy. What grade would you assign?"
-            },
-            {
-                "task": "detection",
-                "prompt": "Identify and locate any microaneurysms, hemorrhages, or exudates in this fundus image."
-            }
-        ],
-        "pathology": [
-            {
-                "task": "classification",
-                "prompt": "Classify this histopathology image. Is it benign or malignant?"
-            },
-            {
-                "task": "counting",
-                "prompt": "Count the number of mitotic figures in this pathology image."
-            }
-        ],
-        "ultrasound": [
-            {
-                "task": "classification",
-                "prompt": "Analyze this ultrasound image. What organ is being examined and are there any abnormalities?"
-            },
-            {
-                "task": "vqa",
-                "prompt": "Is there evidence of gallstones in this ultrasound image?"
-            }
-        ]
-    }
-
 def main():
     parser = argparse.ArgumentParser(description="FLARE 2025 Challenge Inference")
     
