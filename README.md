@@ -8,6 +8,66 @@ The pre-trained baseline model is available at:
 
 🤗 **Model**: [leoyinn/qwen2.5vl-flare2025](https://huggingface.co/leoyinn/qwen2.5vl-flare2025)
 
+## 🐳 Docker Deployment
+
+For easy deployment and reproducible results, we provide a complete Docker solution. This is the **recommended approach** for production use and challenge submissions.
+
+### Quick Start with Docker
+
+If you have the pre-built Docker image (You may found it in [Docker Imgae Archive](https://huggingface.co/leoyinn/flare25-qwen2.5vl/blob/main/qwenvl-flare2025.tar.gz)):
+
+```bash
+# Load pre-built image
+docker load -i qwenvl-flare2025.tar.gz
+
+# Run inference on your dataset
+docker run --gpus all \
+    -v $(pwd)/path/to/inference/dataset:/app/input/organized_dataset \
+    -v $(pwd)/predictions:/app/output \
+    --rm qwenvl-inference:latest
+```
+
+### Build Docker Image from Source
+
+```bash
+# Navigate to docker deployment directory
+cd docker_deployment
+
+# Build the Docker image (downloads models automatically)
+docker build -f Dockerfile -t qwenvl-inference .
+
+# Alternative: Use the build script
+chmod +x docker_build.sh
+./docker_build.sh
+```
+
+### Running Inference with Docker
+
+```bash
+# Standard inference run
+docker run --gpus all \
+    -v $(pwd)/path/to/inference/dataset:/app/input/organized_dataset \
+    -v $(pwd)/predictions:/app/output \
+    --rm qwenvl-inference:latest
+```
+
+### Docker Requirements
+
+- **GPU**: NVIDIA GPU with CUDA support (24GB+ VRAM recommended)
+- **Docker**: Docker with NVIDIA Container Toolkit
+- **Storage**: 24GB+ disk space for Docker image
+- **Memory**: 16GB+ system RAM
+
+### Docker Benefits
+
+- ✅ **Zero Setup**: All dependencies pre-installed
+- ✅ **Reproducible**: Consistent environment across systems
+- ✅ **Portable**: Run anywhere Docker is supported
+- ✅ **Scalable**: Easy deployment for batch processing
+- ✅ **Isolated**: No conflicts with system packages
+
+> **📖 Detailed Docker Documentation**: See [`docker_deployment/README.md`](docker_deployment/README.md) for comprehensive Docker instructions, troubleshooting, and advanced configuration options.
+
 ## Overview
 
 The pipeline supports all 19 datasets across 8 medical imaging modalities:

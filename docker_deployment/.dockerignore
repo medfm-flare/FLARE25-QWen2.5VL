@@ -1,0 +1,117 @@
+# Git and version control
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+*.md
+docs/
+
+# Development and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.cache
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Logs and temporary files
+*.log
+logs/
+temp/
+tmp/
+*.tmp
+*.temp
+
+# Dataset and large files (should be mounted as volumes)
+organized_dataset/
+datasets/
+*.tar.gz
+*.zip
+*.rar
+*.7z
+
+# Model files (should be downloaded or mounted)
+models/
+checkpoints/
+finetuned_*/
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.onnx
+
+# Output and cache directories
+output/
+outputs/
+cache/
+.cache/
+*.cache
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Test files
+test_*
+*_test.py
+tests/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Editor backups
+*~
+.*.swp
+.*.swo
+
+# Wandb experiment tracking
+wandb/
+
+# HuggingFace cache (will be created in container)
+.cache/
+transformers_cache/
+
+# Docker files that shouldn't be in the image
+docker-compose.override.yml
+.dockerignore
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/ 
