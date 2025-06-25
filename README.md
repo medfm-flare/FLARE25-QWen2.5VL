@@ -58,14 +58,6 @@ docker run --gpus all \
 - **Storage**: 24GB+ disk space for Docker image
 - **Memory**: 16GB+ system RAM
 
-### Docker Benefits
-
-- ✅ **Zero Setup**: All dependencies pre-installed
-- ✅ **Reproducible**: Consistent environment across systems
-- ✅ **Portable**: Run anywhere Docker is supported
-- ✅ **Scalable**: Easy deployment for batch processing
-- ✅ **Isolated**: No conflicts with system packages
-
 > **📖 Detailed Docker Documentation**: See [`docker_deployment/README.md`](docker_deployment/README.md) for comprehensive Docker instructions, troubleshooting, and advanced configuration options.
 
 ## Overview
