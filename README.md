@@ -8,6 +8,16 @@ The pre-trained baseline model is available at:
 
 🤗 **Model**: [leoyinn/qwen2.5vl-flare2025](https://huggingface.co/leoyinn/qwen2.5vl-flare2025)
 
+---
+
+### 🎬 Watch the 1-Minute Project Overview
+
+[![Watch the video](assets/promo_video_thumbnail.png)](assets/promo_video.mp4)
+
+*A overview of the 4-step framework for building a medical vision-language model*
+
+---
+
 ## 🐳 Docker Deployment
 
 For easy deployment and reproducible results, we provide a complete Docker solution. This is the **recommended approach** for production use and challenge submissions.
