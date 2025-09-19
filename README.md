@@ -12,7 +12,7 @@ The pre-trained baseline model is available at:
 
 ### 🎬 Watch the 1-Minute Project Overview
 
-[![Watch the video](assets/promo_video_thumbnail.png)](assets/promo_video.mp4)
+[![Watch the video](assets/promo_video_thumbnail.png)](https://www.youtube.com/watch?v=VJ5VvZHEbgo)
 
 *A overview of the 4-step framework for building a medical vision-language model*
 
